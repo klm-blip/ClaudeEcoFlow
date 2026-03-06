@@ -1,0 +1,26 @@
+# Credentials - never commit these
+ecoflow_credentials.txt
+
+# Reference repos (cloned external repos, not our code)
+references/
+
+# Logs
+*.log
+*.log.*
+cmd_sweep_progress.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
