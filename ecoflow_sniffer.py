@@ -1,19 +1,28 @@
 """
-EcoFlow MQTT Sniffer v2
+EcoFlow MQTT Sniffer v3
 =======================
 Subscribe to ALL topics for your gateway and log every message.
 
-KEY FIX vs v1: Uses a modified CLIENT_ID (_SNIFF suffix) so the sniffer
-and the EcoFlow phone app can run simultaneously — the broker allows one
-connection per CLIENT_ID, so different IDs coexist fine.
+KEY FIX (v2→v3): Uses a VALID alternate CLIENT_ID instead of the broken
+_SNIFF suffix (which was malformed and caused rc=5 broker rejection).
 
-Run this WHILE the EcoFlow app is open on your phone, then use the app to:
-  1. Change the operating mode (Backup -> Self-Powered -> back)
-  2. Start AC charging (set a specific watt rate)
-  3. Stop AC charging
+Format: ANDROID_{different_random}_{USER_ID}
+The random segment is changed so the sniffer and phone app can coexist.
+The USER_ID (3rd segment) is kept identical for correct topic routing.
 
-The sniffer captures the exact MQTT topic and protobuf payload the app uses.
-Share sniffer_captures.log after capturing commands.
+WHAT THIS CAPTURES:
+  - All device telemetry on /app/device/property/{SN}
+  - Any commands or replies on /app/{USER_ID}/#
+
+NOTE: EcoFlow phone app uses cloud REST (not direct MQTT publish).
+Cloud-to-device commands arrive on the EcoFlow cloud's own MQTT session
+(not our session), so app commands won't appear here directly.
+However, device STATE CHANGES (mode, SOC, watts) DO appear in telemetry.
+
+To capture the actual command format: use mitmproxy to intercept HTTPS.
+
+Run WHILE using the EcoFlow app, watch for telemetry changes.
+Log is written to sniffer_captures.log.
 
 Run:
   python ecoflow_sniffer.py
@@ -55,10 +64,13 @@ BASE_CLIENT_ID = creds["CLIENT_ID"]
 # SESSION_ID = 3rd segment of CLIENT_ID (e.g. "1971363830522871810")
 # This is the routing ID used in MQTT topics: /app/{SESSION_ID}/{device}/set
 _parts     = BASE_CLIENT_ID.split("_", 2)
+_rand_seg  = _parts[1] if len(_parts) >= 3 else "574080605"
 SESSION_ID = _parts[2] if len(_parts) >= 3 else _parts[-1]
 
-# Modified CLIENT_ID so sniffer and phone app can connect simultaneously
-SNIFFER_CLIENT_ID = BASE_CLIENT_ID + "_SNIFF"
+# Generate a valid alternate CLIENT_ID: ANDROID_{different_rand}_{USER_ID}
+# Increment the random segment by 1 — keeps valid format, avoids collision
+_new_rand = str(int(_rand_seg) + 1) if _rand_seg.isdigit() else "574080606"
+SNIFFER_CLIENT_ID = f"ANDROID_{_new_rand}_{SESSION_ID}"
 
 GATEWAY_SN  = "HR65ZA1AVH7J0027"
 INVERTER_SN = "P101ZA1A9HA70164"

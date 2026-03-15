@@ -4,6 +4,16 @@ ecoflow_credentials.txt
 # Reference repos (cloned external repos, not our code)
 references/
 
+# APK and extracted DEX files (too large for git)
+*.apk
+apk_extracted/
+
+# Claude internal
+.claude/
+
+# Windows artifacts
+nul
+
 # Logs
 *.log
 *.log.*

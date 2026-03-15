@@ -44,8 +44,6 @@ MQTT_PORT   = 8883
 GATEWAY_SN  = "HR65ZA1AVH7J0027"
 INVERTER_SN = "P101ZA1A9HA70164"
 
-# Set True once you've verified commands work — START WITH False
-ENABLE_COMMANDS = False
 
 HISTORY_SECONDS    = 900   # 15 minutes of power history
 HISTORY_POINTS     = 180   # one sample every 5s
@@ -62,6 +60,7 @@ def _load_credentials():
         "MQTT_USER": "app-740f41d44de04eaf83832f8a801252e9",
         "MQTT_PASS": "c1e46f17f6994a1e8252f1e1f3135b68",
         "CLIENT_ID": "ANDROID_574080605_1971363830522871810",
+        "REST_JWT":  "",
     }
     if _os.path.exists(cred_file):
         for line in open(cred_file).read().splitlines():
@@ -88,6 +87,7 @@ _creds    = _load_credentials()
 MQTT_USER = _creds["MQTT_USER"]
 MQTT_PASS = _creds["MQTT_PASS"]
 CLIENT_ID = _creds["CLIENT_ID"]
+REST_JWT  = _creds["REST_JWT"]
 # SESSION_ID = 3rd segment of CLIENT_ID (e.g. "1971363830522871810")
 # This is the routing ID in topics: /app/{SESSION_ID}/{device}/set
 _id_parts  = CLIENT_ID.split("_", 2)
@@ -946,12 +946,28 @@ class Dashboard:
     # COMMAND HANDLERS
     # ─────────────────────────────────────────────────────────────────────────
     def _cmd_mode(self, mode: str):
-        m = 1 if mode == "backup" else 2
-        seq = int(time.time()) & 0xFFFF
-        self._log_cmd(f"MODE -> {mode.upper()}  (mode={m}, seq={seq})")
-        # Try gateway SN first; if no response try inverter SN in next iteration
-        payload = ProtoEncoder.work_mode(GATEWAY_SN, m, seq=seq)
-        self.mqtt.publish_command(payload, self._commands_live)
+        target = -1 if mode == "backup" else 2
+        self._log_cmd(f"MODE -> {mode.upper()}  (REST targetMode={target})")
+        if not self._commands_live:
+            return
+        if not REST_JWT:
+            self._log_cmd("ERROR: REST_JWT missing in credentials file")
+            return
+        url  = "https://api-a.ecoflow.com/tou-service/goe/ai-mode/notify-mode-changed"
+        hdrs = {"Authorization": f"Bearer {REST_JWT}", "Content-Type": "application/json",
+                "lang": "en-us", "countryCode": "US", "platform": "android",
+                "version": "6.11.0.1731", "User-Agent": "okhttp/4.11.0", "X-Appid": "-1"}
+        body = json.dumps({"sn": GATEWAY_SN, "systemNo": "", "targetMode": target}).encode()
+        def _do_rest():
+            try:
+                req  = urllib.request.Request(url, data=body, headers=hdrs, method="POST")
+                resp = urllib.request.urlopen(req, timeout=15)
+                result = json.loads(resp.read())
+                ok = result.get("code") == "0"
+                self._log_cmd(f"REST {'OK' if ok else 'FAIL'}: {result.get('message','?')}")
+            except Exception as e:
+                self._log_cmd(f"REST ERROR: {e}")
+        threading.Thread(target=_do_rest, daemon=True).start()
 
     def _cmd_charge_start(self, rate: int = None):
         rate = rate or self.charge_rate_var.get()
@@ -1014,7 +1030,9 @@ class Dashboard:
 
             if mode == 2:
                 self._cmd_mode("self_powered")
-            elif mode == 1 and self.state.op_mode == 2:
+            elif mode == 1 and self.state.op_mode != 1:
+                # Send backup/charge command if not already in backup mode,
+                # including when op_mode is None (telemetry not yet received)
                 self._cmd_mode("backup")
 
             if rate == 0:
