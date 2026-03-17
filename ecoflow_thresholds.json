@@ -1,0 +1,16 @@
+{
+  "discharge_above": 8.0,
+  "low_floor": 20.0,
+  "low_charge_below": 3.0,
+  "low_rate": 4200,
+  "mid_floor": 60.0,
+  "mid_charge_below": 1.5,
+  "mid_rate": 3000,
+  "high_floor": 85.0,
+  "high_charge_below": -1.0,
+  "high_rate": 10500,
+  "max_soc": 95.0,
+  "rate_emergency": 6000,
+  "emergency_charge_below": 6.0,
+  "trend_lookahead": true
+}

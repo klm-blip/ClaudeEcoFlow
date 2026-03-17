@@ -8,6 +8,19 @@ references/
 *.apk
 apk_extracted/
 
+# jadx decompiler and decompiled output (large, derived from APK)
+jadx/
+jadx-*.zip
+jadx_output/
+jadx_output_*/
+
+# Large/temporary files
+_ul
+PROJECT_SNAPSHOT.txt
+
+# House image originals (keep house.png only)
+Gemini_Generated_Image_*
+
 # Claude internal
 .claude/
 

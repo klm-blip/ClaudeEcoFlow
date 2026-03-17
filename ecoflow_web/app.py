@@ -1,0 +1,316 @@
+"""
+EcoFlow Web Dashboard — Flask + WebSocket server.
+
+Run:
+    cd "C:\\Users\\kmars\\OneDrive\\Desktop\\Claude EcoFlow Project"
+    python -m ecoflow_web.app
+
+Open http://localhost:5000 in your browser.
+"""
+
+import datetime
+import json
+import logging
+import os
+import threading
+import time
+
+from flask import Flask, send_from_directory
+from flask_sock import Sock
+
+from .config import COLORS
+from .state import PowerState, PriceState
+from .history import HistoryBuffer
+from .comed import ComedPoller
+from .automation import AutoThresholds, AutoController
+from .mqtt_handler import MQTTHandler
+from .proto_codec import (
+    build_mode_command, build_charge_command,
+    build_charge_power_command, build_and_wrap,
+)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("ecoflow")
+
+# ─── Application state ─────────────────────────────────────────────────────
+power_state  = PowerState()
+price_state  = PriceState()
+history      = HistoryBuffer()
+thresholds   = AutoThresholds.load()
+auto         = AutoController()
+auto.enabled = False    # start with auto OFF for testing; flip for production
+
+commands_live = False   # DRY RUN by default; flip for production
+command_log   = []      # [{ts, live, text}, ...] last 30 entries
+mqtt_handler  = None    # set in main()
+
+# WebSocket clients
+_ws_clients = set()
+_ws_lock    = threading.Lock()
+
+# ─── Flask app ──────────────────────────────────────────────────────────────
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+app = Flask(__name__, static_folder=_static_dir)
+sock = Sock(app)
+
+
+@app.after_request
+def add_no_cache_headers(response):
+    """Prevent browser caching so refreshes always get the latest code."""
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+@app.route("/")
+def index():
+    return send_from_directory(_static_dir, "index.html")
+
+
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory(_static_dir, filename)
+
+
+# ─── WebSocket ──────────────────────────────────────────────────────────────
+
+def _build_state_msg():
+    """Serialize full dashboard state to JSON."""
+    return json.dumps({
+        "type":          "state",
+        "power":         power_state.to_dict(),
+        "price":         price_state.to_dict(),
+        "thresholds":    thresholds.to_dict(),
+        "auto": {
+            "enabled":       auto.enabled,
+            "last_decision": auto.last_decision,
+            "override_remaining": max(0, int(auto.manual_override_until - time.time()))
+                                  if auto.manual_override_until > time.time() else 0,
+        },
+        "history":       history.to_dict(),
+        "commands_live":  commands_live,
+        "command_log":    command_log[-30:],
+        "mqtt_connected": mqtt_handler.is_alive if mqtt_handler else False,
+    })
+
+
+def _broadcast():
+    """Push state to all connected WebSocket clients."""
+    msg = _build_state_msg()
+    dead = set()
+    with _ws_lock:
+        for ws in list(_ws_clients):
+            try:
+                ws.send(msg)
+            except Exception:
+                dead.add(ws)
+        for d in dead:
+            _ws_clients.discard(d)
+
+
+def _log_command(text: str):
+    global command_log
+    entry = {
+        "ts":   datetime.datetime.now().strftime("%H:%M:%S"),
+        "live": commands_live,
+        "text": text,
+    }
+    command_log.append(entry)
+    if len(command_log) > 50:
+        command_log = command_log[-30:]
+    log.info("CMD [%s] %s", "LIVE" if commands_live else "DRY", text)
+
+
+def _handle_command(data: dict):
+    """Process a command from the frontend."""
+    global commands_live, thresholds
+    cmd = data.get("cmd")
+
+    if cmd == "mode":
+        val = data.get("value", "backup")
+        sp = (val == "self_powered")
+        override_min = data.get("override_minutes", 5)
+        payload = build_and_wrap(build_mode_command(self_powered=sp))
+        mqtt_handler.publish_command(payload, commands_live)
+        # Tell automation about the manual mode change so it doesn't fight it
+        mode_int = 2 if sp else 1
+        auto.manual_mode_change(mode_int, override_minutes=int(override_min))
+        _log_command(f"MODE → {'Self-Powered' if sp else 'Backup'} (override {override_min}m)")
+
+    elif cmd == "charge_start":
+        rate    = int(data.get("rate", 3000))
+        max_soc = int(data.get("max_soc", 95))
+        # Send charge ON + power setting
+        p1 = build_and_wrap(build_charge_command(True))
+        mqtt_handler.publish_command(p1, commands_live)
+        p2 = build_and_wrap(build_charge_power_command(rate, max_soc))
+        mqtt_handler.publish_command(p2, commands_live)
+        _log_command(f"CHARGE START {rate}W  SOC≤{max_soc}%")
+
+    elif cmd == "charge_stop":
+        payload = build_and_wrap(build_charge_command(False))
+        mqtt_handler.publish_command(payload, commands_live)
+        _log_command("CHARGE STOP")
+
+    elif cmd == "apply_rate":
+        rate    = int(data.get("rate", 3000))
+        max_soc = int(data.get("max_soc", 95))
+        payload = build_and_wrap(build_charge_power_command(rate, max_soc))
+        mqtt_handler.publish_command(payload, commands_live)
+        _log_command(f"RATE → {rate}W  SOC≤{max_soc}%")
+
+    elif cmd == "toggle_auto":
+        auto.enabled = not auto.enabled
+        _log_command(f"AUTO {'ON' if auto.enabled else 'OFF'}")
+
+    elif cmd == "toggle_live":
+        commands_live = not commands_live
+        _log_command(f"COMMANDS → {'LIVE' if commands_live else 'DRY RUN'}")
+
+    elif cmd == "cancel_override":
+        auto.cancel_override()
+        _log_command("Manual override cancelled")
+
+    elif cmd == "set_threshold":
+        key = data.get("key")
+        val = data.get("value")
+        if key and val is not None and hasattr(thresholds, key):
+            field_type = type(getattr(thresholds, key))
+            setattr(thresholds, key, field_type(val))
+            thresholds.save()
+            _log_command(f"THRESHOLD {key} → {val}")
+            # Trigger immediate automation re-evaluation
+            if auto.enabled:
+                _run_automation()
+
+    _broadcast()
+
+
+@sock.route("/ws")
+def websocket(ws):
+    with _ws_lock:
+        _ws_clients.add(ws)
+    log.info("WebSocket client connected (%d total)", len(_ws_clients))
+    try:
+        # Send current state immediately
+        ws.send(_build_state_msg())
+        while True:
+            raw = ws.receive(timeout=60)
+            if raw is None:
+                # keepalive — send state
+                ws.send(_build_state_msg())
+                continue
+            try:
+                data = json.loads(raw)
+                _handle_command(data)
+            except json.JSONDecodeError:
+                log.warning("Invalid JSON from WebSocket: %s", raw[:100])
+    except Exception:
+        pass
+    finally:
+        with _ws_lock:
+            _ws_clients.discard(ws)
+        log.info("WebSocket client disconnected (%d remaining)", len(_ws_clients))
+
+
+# ─── Automation ─────────────────────────────────────────────────────────────
+
+def _run_automation():
+    """Evaluate automation decision and execute if appropriate."""
+    mode, rate, reason = auto.decide(price_state, power_state, thresholds)
+
+    ok, why = auto.should_send(mode, rate)
+    if not ok:
+        # Show the decision + why it's blocked
+        if why == "no change":
+            auto.last_decision = reason or auto.last_decision
+        elif "manual override" in why:
+            auto.last_decision = f"OVERRIDE: {reason} (paused — {why})"
+        else:
+            auto.last_decision = reason or auto.last_decision
+        return
+
+    auto.last_decision = reason or auto.last_decision
+
+    # Execute
+    if mode == 2:
+        # Self-Powered (discharge)
+        p = build_and_wrap(build_mode_command(self_powered=True))
+        mqtt_handler.publish_command(p, commands_live)
+        _log_command(f"AUTO: {reason}")
+    elif mode == 1:
+        # Backup mode
+        p = build_and_wrap(build_mode_command(self_powered=False))
+        mqtt_handler.publish_command(p, commands_live)
+        if rate and rate > 0:
+            # Start charging at specified rate
+            p1 = build_and_wrap(build_charge_command(True))
+            mqtt_handler.publish_command(p1, commands_live)
+            p2 = build_and_wrap(build_charge_power_command(rate, int(thresholds.max_soc)))
+            mqtt_handler.publish_command(p2, commands_live)
+            _log_command(f"AUTO: {reason}")
+        elif rate == 0:
+            # Stop charging
+            p1 = build_and_wrap(build_charge_command(False))
+            mqtt_handler.publish_command(p1, commands_live)
+            _log_command(f"AUTO: {reason}")
+
+    auto.record(mode, rate, reason)
+
+
+# ─── Callbacks ──────────────────────────────────────────────────────────────
+
+def _on_telemetry_update():
+    """Called from MQTT thread when new telemetry arrives."""
+    _broadcast()
+    if auto.enabled:
+        _run_automation()
+
+
+def _on_price_update():
+    """Called from ComEd poller thread when new prices arrive."""
+    _broadcast()
+    if auto.enabled:
+        _run_automation()
+
+
+# ─── Periodic tick (30s automation re-eval) ─────────────────────────────────
+
+def _tick_loop():
+    """Independent 30s timer for automation re-evaluation."""
+    while True:
+        time.sleep(30)
+        if auto.enabled:
+            _run_automation()
+            _broadcast()
+
+
+# ─── Main ───────────────────────────────────────────────────────────────────
+
+def main():
+    global mqtt_handler
+
+    log.info("Starting EcoFlow Web Dashboard...")
+
+    # Start MQTT
+    mqtt_handler = MQTTHandler(power_state, history, _on_telemetry_update)
+    mqtt_handler.start()
+    log.info("MQTT handler started")
+
+    # Start ComEd poller
+    comed = ComedPoller(price_state, _on_price_update)
+    comed.start()
+    log.info("ComEd poller started")
+
+    # Start periodic automation tick
+    threading.Thread(target=_tick_loop, daemon=True).start()
+    log.info("Automation tick started (30s interval)")
+
+    # Start Flask
+    log.info("Web dashboard at http://localhost:5000")
+    app.run(host="0.0.0.0", port=5000, debug=False)
+
+
+if __name__ == "__main__":
+    main()

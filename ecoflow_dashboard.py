@@ -20,10 +20,12 @@ Run:
   python ecoflow_dashboard.py
 """
 
+import datetime
 import json
 import logging
 import math
 import os as _os
+import random
 import struct
 import threading
 import time
@@ -39,7 +41,7 @@ import paho.mqtt.client as mqtt
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-MQTT_HOST   = "mqtt.ecoflow.com"
+MQTT_HOST   = "mqtt-a.ecoflow.com"
 MQTT_PORT   = 8883
 GATEWAY_SN  = "HR65ZA1AVH7J0027"
 INVERTER_SN = "P101ZA1A9HA70164"
@@ -97,7 +99,8 @@ TELEMETRY_TOPICS = [
     f"/app/device/property/{GATEWAY_SN}",
     f"/app/device/property/{INVERTER_SN}",
 ]
-COMMAND_TOPIC = f"/app/{SESSION_ID}/{GATEWAY_SN}/set"
+COMMAND_TOPIC = f"/app/{SESSION_ID}/{GATEWAY_SN}/thing/property/set"
+GET_TOPIC     = f"/app/{SESSION_ID}/{GATEWAY_SN}/thing/property/get"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,74 +194,96 @@ class ProtoDecoder:
 # ─────────────────────────────────────────────────────────────────────────────
 # PROTOBUF COMMAND ENCODER
 # ─────────────────────────────────────────────────────────────────────────────
-class ProtoEncoder:
-    """
-    Builds protobuf-encoded command messages for the EcoFlow HR65 gateway.
-    The command structure mirrors the telemetry nesting:
-      outer(field1) -> inner(field1=payload, field2=seq, field3=19)
-        payload: field1=device_sn, field2=cmd_func, field3=seq, field4=pdata
-    
-    cmd_func codes confirmed for HR65:
-      20 = AC charge config  (pdata: field1=watts, field2=pause_flag)
-      32 = Work mode         (pdata: field1=mode  1=backup 2=self-powered)
-              NOTE: cmd_func=32 (work_mode) not yet verified with corrected topic.
-    """
+# ── Protobuf encoding primitives (confirmed working, ported from test script) ──
 
-    @staticmethod
-    def _varint(v: int) -> bytes:
-        out = []
-        while True:
-            out.append(v & 0x7F)
-            v >>= 7
-            if v == 0: break
-        for i in range(len(out) - 1):
-            out[i] |= 0x80
-        return bytes(out)
+def _encode_varint(value):
+    result = bytearray()
+    while value > 0x7F:
+        result.append((value & 0x7F) | 0x80)
+        value >>= 7
+    result.append(value & 0x7F)
+    return bytes(result)
 
-    @staticmethod
-    def _field(num: int, wire: int, val) -> bytes:
-        e = ProtoEncoder
-        tag = e._varint((num << 3) | wire)
-        if wire == 0: return tag + e._varint(val)
-        if wire == 2: return tag + e._varint(len(val)) + val
-        if wire == 5: return tag + struct.pack('<f', val)
-        raise ValueError(f"Unknown wire type {wire}")
+def _encode_field_varint(field_number, value, force=False):
+    if value == 0 and not force:
+        return b""
+    tag = (field_number << 3) | 0
+    return _encode_varint(tag) + _encode_varint(value)
 
-    @classmethod
-    def _str(cls, num, s):   return cls._field(num, 2, s.encode())
-    @classmethod
-    def _int(cls, num, v):   return cls._field(num, 0, v)
-    @classmethod
-    def _msg(cls, num, b):   return cls._field(num, 2, b)
+def _encode_field_bool(field_number, value):
+    if not value:
+        return b""
+    tag = (field_number << 3) | 0
+    return _encode_varint(tag) + _encode_varint(1)
 
-    @classmethod
-    def charge_config(cls, device_sn: str, watts: int, pause: int = 0,
-                      seq: int = 1) -> bytes:
-        """AC charge config command. pause=0 to start, pause=1 to stop."""
-        pdata   = cls._int(1, watts) + cls._int(2, pause)
-        payload = (cls._str(1, device_sn) + cls._int(2, 20) +
-                   cls._int(3, seq)       + cls._msg(4, pdata))
-        inner   = cls._msg(1, payload) + cls._int(2, seq) + cls._int(3, 19)
-        return cls._msg(1, inner)
+def _encode_field_bytes(field_number, data):
+    tag = (field_number << 3) | 2
+    return _encode_varint(tag) + _encode_varint(len(data)) + data
 
-    @classmethod
-    def work_mode(cls, device_sn: str, mode: int, seq: int = 1) -> bytes:
-        """Work mode command. mode=1 backup, mode=2 self-powered."""
-        pdata   = cls._int(1, mode)
-        payload = (cls._str(1, device_sn) + cls._int(2, 32) +
-                   cls._int(3, seq)       + cls._msg(4, pdata))
-        # BUG FIX: outer seq must match inner seq (was hardcoded 1 before)
-        inner   = cls._msg(1, payload) + cls._int(2, seq) + cls._int(3, 19)
-        return cls._msg(1, inner)
+def _encode_field_string(field_number, s):
+    return _encode_field_bytes(field_number, s.encode("utf-8"))
 
-    @classmethod
-    def build(cls, device_sn: str, cmd_func: int, pdata: bytes,
-              seq: int = 1) -> bytes:
-        """Generic command builder — for trying alternate cmd_func codes."""
-        payload = (cls._str(1, device_sn) + cls._int(2, cmd_func) +
-                   cls._int(3, seq)       + cls._msg(4, pdata))
-        inner   = cls._msg(1, payload) + cls._int(2, seq) + cls._int(3, 19)
-        return cls._msg(1, inner)
+def _encode_field_message(field_number, message_bytes):
+    return _encode_field_bytes(field_number, message_bytes)
+
+# ── SHP3 command builders (DevAplComm.ConfigWrite → Common.Header → Send_Header_Msg) ──
+
+def build_mode_command(self_powered=False, scheduled=False, tou=False):
+    """CfgPanelEnergyStrategyOperateMode on ConfigWrite field 544."""
+    mode_msg = b""
+    mode_msg += _encode_field_bool(1, self_powered)
+    mode_msg += _encode_field_bool(2, scheduled)
+    mode_msg += _encode_field_bool(3, tou)
+    return _encode_field_message(544, mode_msg)
+
+def build_charge_command(enable, channel=1, use_normal_chg=False):
+    """BackupCtrl on ConfigWrite field 535+channel. 1=ON, 2=OFF."""
+    charge_val = 1 if enable else 2
+    backup_ctrl = b""
+    backup_ctrl += _encode_field_varint(1, 1)          # ctrlEn = 1
+    if use_normal_chg:
+        backup_ctrl += _encode_field_varint(3, charge_val)  # ctrlNormalChg
+    else:
+        backup_ctrl += _encode_field_varint(2, charge_val)  # ctrlForceChg
+    field_num = 534 + channel
+    return _encode_field_message(field_num, backup_ctrl)
+
+def build_charge_power_command(watts, max_soc=None):
+    """ConfigWrite field 542 (watts) + optional field 33 (SOC %)."""
+    msg = b""
+    msg += _encode_field_varint(542, watts)
+    if max_soc is not None:
+        msg += _encode_field_varint(33, max_soc)
+    return msg
+
+def build_header(pdata, seq):
+    """Common.Header: dest=11, src=32, cmdSet=254, cmdId=17."""
+    msg = b""
+    msg += _encode_field_bytes(1, pdata)
+    msg += _encode_field_varint(2, 32)        # src
+    msg += _encode_field_varint(3, 11)        # dest (SHP3)
+    msg += _encode_field_varint(4, 1)         # dSrc
+    msg += _encode_field_varint(5, 1)         # dDest
+    msg += _encode_field_varint(8, 254)       # cmdFunc
+    msg += _encode_field_varint(9, 17)        # cmdId
+    msg += _encode_field_varint(10, len(pdata))
+    msg += _encode_field_varint(11, 1)        # needAck
+    msg += _encode_field_varint(14, seq)
+    msg += _encode_field_varint(15, 1)        # productId
+    msg += _encode_field_varint(16, 19)       # version
+    msg += _encode_field_varint(17, 1)        # payloadVer
+    msg += _encode_field_string(23, "Android")
+    return msg
+
+def build_send_header_msg(header_bytes):
+    """Outer wrapper: Send_Header_Msg field 1."""
+    return _encode_field_message(1, header_bytes)
+
+def _build_and_wrap(config_write_bytes):
+    """Full pipeline: ConfigWrite → Header → Send_Header_Msg. Returns ready-to-publish bytes."""
+    seq = random.randint(100000, 999999)
+    header = build_header(config_write_bytes, seq)
+    return build_send_header_msg(header)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -287,15 +312,19 @@ class PowerState:
 
 @dataclass
 class PriceState:
-    price_5min:   Optional[float] = None   # cents/kWh, most recent 5-min interval
-    price_hour:   Optional[float] = None   # cents/kWh, current hour average
-    trend:        str             = "flat" # "rising" | "falling" | "flat"
-    trend_slope:  float           = 0.0
-    tier:         str             = "—"
-    tier_color:   str             = "#8b949e"
-    history_5min: list            = field(default_factory=list)  # [(ts, price), ...] newest first
-    last_update:  float           = 0.0
-    error:        str             = ""
+    price_5min:      Optional[float] = None   # cents/kWh, most recent 5-min interval
+    price_hour:      Optional[float] = None   # cents/kWh, current hour average (ComEd API)
+    running_hour_avg: Optional[float] = None  # cents/kWh, our own running avg this hour
+    effective_price: Optional[float] = None   # cents/kWh, conservative of the two
+    hour_prices:     list            = field(default_factory=list)  # 5-min prices in current hour
+    _current_hour:   int             = -1     # hour number for resetting hour_prices
+    trend:           str             = "flat" # "rising" | "falling" | "flat"
+    trend_slope:     float           = 0.0
+    tier:            str             = "—"
+    tier_color:      str             = "#8b949e"
+    history_5min:    list            = field(default_factory=list)  # [(ts, price), ...] newest first
+    last_update:     float           = 0.0
+    error:           str             = ""
 
     @property
     def stale(self): return self.last_update > 0 and (time.time() - self.last_update) > 180
@@ -322,6 +351,7 @@ def parse_payload(payload: bytes, state: PowerState) -> bool:
                 updated = True
 
         _s("battery_w", gf(518))
+        _s("soc_pct",   gf(262))     # CMS_BATT_SOC (float, from HR65 gateway)
         _s("volt_a",    gf(1063))
         _s("volt_b",    gf(1064))
 
@@ -455,9 +485,27 @@ class ComedPoller:
             self.ps.last_update  = time.time()
             self.ps.error        = ""
 
-            log.info("ComEd: 5min=%.1f¢  hour=%s¢  trend=%s(%.2f)  tier=%s",
+            # Running average: last 4 five-minute prices (~20 min rolling window)
+            # Display only — not used for automation decisions.
+            last4 = [p for _, p in entries[:4]]
+            if last4:
+                self.ps.running_hour_avg = sum(last4) / len(last4)
+            else:
+                self.ps.running_hour_avg = hour_avg
+
+            # Effective price = ComEd hourly average (what BESH actually bills on).
+            # Running hour avg and 5-min trend are display-only indicators.
+            if hour_avg is not None:
+                self.ps.effective_price = hour_avg
+            else:
+                # Fallback: no hourly avg yet (rare) — use latest 5-min price
+                self.ps.effective_price = current
+
+            log.info("ComEd: 5min=%.1f¢  hour=%s¢  running=%s¢  eff=%s¢  trend=%s(%.2f)  tier=%s",
                      current,
                      f"{hour_avg:.1f}" if hour_avg else "?",
+                     f"{self.ps.running_hour_avg:.1f}" if self.ps.running_hour_avg else "?",
+                     f"{self.ps.effective_price:.1f}" if self.ps.effective_price else "?",
                      trend, sl, tier)
             self.on_update()
 
@@ -469,23 +517,65 @@ class ComedPoller:
 # ─────────────────────────────────────────────────────────────────────────────
 # AUTOMATION THRESHOLDS & CONTROLLER
 # ─────────────────────────────────────────────────────────────────────────────
+THRESHOLDS_FILE = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "ecoflow_thresholds.json")
+
 @dataclass
 class AutoThresholds:
-    discharge_above:    float = 9.6    # switch to Self-Powered above this (¢)
-    hold_above:         float = 6.0    # stop charging above this (¢)
-    charge_normal:      float = 6.0    # charge at normal rate below this (¢)
-    charge_aggressive:  float = 3.0    # charge at max rate below this (¢)
-    soc_emergency:      float = 20.0   # always charge regardless of price (%)
-    soc_target:         float = 80.0   # normal charge target (%)
-    soc_topoff:         float = 95.0   # only top-off at very cheap prices (%)
-    rate_normal:        int   = 1500   # normal charge rate (W)
-    rate_aggressive:    int   = 3000   # max charge rate (W)
-    rate_emergency:     int   = 1000   # emergency charge rate (W)
-    trend_lookahead:    bool  = True   # pre-act on strong trends
+    # Discharge: switch to Self-Powered (battery powers home) above this price
+    discharge_above:    float = 8.0    # ¢/kWh
+
+    # SOC-tiered charging with FLOOR model:
+    #   Emergency (0% → low_floor):           charge below emergency_charge_below
+    #   Low       (low_floor → mid_floor):    charge below low_charge_below
+    #   Mid       (mid_floor → high_floor):   charge below mid_charge_below
+    #   High      (high_floor → max_soc):     charge below high_charge_below
+    #   Above max_soc:                        stop charging
+
+    low_floor:          float = 20.0   # % — below this is emergency
+    low_charge_below:   float = 2.0    # ¢ — generous (battery is low)
+    low_rate:           int   = 6000   # W — charge fast
+
+    mid_floor:          float = 60.0   # % — below this is low band
+    mid_charge_below:   float = 1.5    # ¢ — moderate
+    mid_rate:           int   = 3000   # W
+
+    high_floor:         float = 85.0   # % — below this is mid band
+    high_charge_below:  float = -1.0   # ¢ — only very cheap/negative
+    high_rate:          int   = 1500   # W
+
+    max_soc:            float = 95.0   # % — stop charging above this
+
+    rate_emergency:     int   = 6000   # W — fast charge in emergency
+    emergency_charge_below: float = 6.0   # ¢ — even emergency has a price cap
+
+    def save(self):
+        """Persist current thresholds to JSON file."""
+        from dataclasses import asdict
+        try:
+            with open(THRESHOLDS_FILE, "w") as f:
+                json.dump(asdict(self), f, indent=2)
+        except Exception as e:
+            log.warning("Failed to save thresholds: %s", e)
+
+    @classmethod
+    def load(cls):
+        """Load thresholds from JSON file, falling back to defaults."""
+        t = cls()
+        if _os.path.exists(THRESHOLDS_FILE):
+            try:
+                with open(THRESHOLDS_FILE) as f:
+                    saved = json.load(f)
+                for k, v in saved.items():
+                    if hasattr(t, k):
+                        setattr(t, k, type(getattr(t, k))(v))
+                log.info("Loaded thresholds from %s", THRESHOLDS_FILE)
+            except Exception as e:
+                log.warning("Failed to load thresholds: %s", e)
+        return t
 
 
 class AutoController:
-    MIN_HOLD = 120   # seconds between commands
+    MIN_HOLD = 30   # seconds between commands (reduced from 120 for responsiveness)
 
     def __init__(self):
         self.enabled        = False
@@ -498,66 +588,70 @@ class AutoController:
         """
         Returns (target_mode, target_rate_w, reason). None = no change.
 
-        Primary signal: current hour average — this is what you're billed.
-        Trend lookahead: 5-min slope nudges the effective price to pre-act
-        before the hour average catches up to a move. Weight is halved when
-        we have a solid hour average (less aggressive lookahead vs raw 5-min).
-        Early in a new hour when hour_avg isn't meaningful yet, falls back to
-        5-min price only.
+        SOC floor model — bands read bottom-up:
+          Emergency (0% → low_floor):         charge at ANY price
+          Low       (low_floor → mid_floor):  charge below low_charge_below
+          Mid       (mid_floor → high_floor): charge below mid_charge_below
+          High      (high_floor → max_soc):   charge below high_charge_below
+          Above max_soc:                      stop charging
         """
         soc = pw.soc_pct
 
-        # Pick base price — prefer hour average (billing signal)
-        if ps.price_hour is not None:
-            base = ps.price_hour
-            src  = "hr"
+        # Effective price = ComEd hourly average (BESH billing rate).
+        # Trend / running avg are display-only — not used for decisions.
+        if ps.effective_price is not None:
+            ep  = ps.effective_price
+            src = "hr"
+        elif ps.price_hour is not None:
+            ep  = ps.price_hour
+            src = "hr"
         elif ps.price_5min is not None:
-            base = ps.price_5min
-            src  = "5m"
+            ep  = ps.price_5min
+            src = "5m"
         else:
             return None, None, "waiting for price data"
 
-        # Trend lookahead using 5-min slope — nudge effective price if
-        # 5-min is trending strongly away from current hour average.
-        # Halved weight when we have a real hour average (less hair-trigger).
-        ep = base
-        if t.trend_lookahead and ps.price_5min is not None and abs(ps.trend_slope) > 1.0:
-            weight = 0.5 if src == "hr" else 1.0
-            ep = max(-5.0, base + ps.trend_slope * 2 * weight)
-
-        # Emergency SOC — charge regardless of price
-        if soc is not None and soc < t.soc_emergency:
-            return 1, t.rate_emergency, f"EMERGENCY: SOC {soc:.0f}% < {t.soc_emergency:.0f}%"
-
-        # Battery full — just decide on mode
-        if soc is not None and soc >= t.soc_topoff:
+        # Battery full — stop charging, just decide on mode
+        if soc is not None and soc >= t.max_soc:
             if ep >= t.discharge_above:
                 return 2, 0, f"DISCHARGE: full + {ep:.1f}c [{src}] >= {t.discharge_above:.1f}c"
-            return 1, 0, f"HOLD: battery full ({soc:.0f}%)"
+            return 1, 0, f"HOLD: battery full ({soc:.0f}% >= {t.max_soc:.0f}%)"
 
         # High price → self-powered (discharge)
         if ep >= t.discharge_above:
-            if soc is None or soc > t.soc_emergency + 10:
+            if soc is None or soc > t.low_floor:
                 return 2, 0, f"DISCHARGE: {ep:.1f}c [{src}] >= {t.discharge_above:.1f}c"
             return 1, 0, f"HOLD: price high but SOC {soc:.0f}% too low"
 
-        # Hold band — don't charge
-        if ep >= t.hold_above:
-            return 1, 0, f"HOLD: {ep:.1f}c [{src}] in hold band"
+        # SOC-tiered charging decision (floor model)
+        if soc is None:
+            # No SOC data — use mid band as safe default
+            if ep < t.mid_charge_below:
+                return 1, t.mid_rate, f"CHARGE: {ep:.1f}c [{src}] (no SOC, mid default)"
+            return 1, 0, f"HOLD: {ep:.1f}c [{src}] (no SOC)"
 
-        # Aggressive charging (very cheap)
-        if ep < t.charge_aggressive:
-            if soc is None or soc < t.soc_topoff:
-                label = "TOPOFF" if (soc and soc >= t.soc_target) else "CHARGE MAX"
-                return 1, t.rate_aggressive, f"{label}: {ep:.1f}c [{src}] deeply cheap"
+        if soc < t.low_floor:
+            # EMERGENCY — below low floor, charge if price below emergency cap
+            if ep < t.emergency_charge_below:
+                return 1, t.rate_emergency, f"EMERGENCY: SOC {soc:.0f}% < {t.low_floor:.0f}%  {ep:.1f}c < {t.emergency_charge_below:.1f}c [{src}]"
+            return 1, 0, f"HOLD EMERGENCY: {ep:.1f}c [{src}] >= {t.emergency_charge_below:.1f}c  SOC {soc:.0f}%"
 
-        # Normal charging
-        if ep < t.charge_normal:
-            if soc is None or soc < t.soc_target:
-                return 1, t.rate_normal, f"CHARGE: {ep:.1f}c [{src}] < {t.charge_normal:.1f}c"
-            return 1, 0, f"HOLD: SOC {soc:.0f}% at target"
+        if soc < t.mid_floor:
+            # LOW band — charge at generous prices
+            if ep < t.low_charge_below:
+                return 1, t.low_rate, f"CHARGE LOW: {ep:.1f}c [{src}] < {t.low_charge_below:.1f}c  SOC {soc:.0f}%"
+            return 1, 0, f"HOLD LOW: {ep:.1f}c [{src}] >= {t.low_charge_below:.1f}c  SOC {soc:.0f}%"
 
-        return 1, 0, f"HOLD: {ep:.1f}c [{src}]"
+        if soc < t.high_floor:
+            # MID band — charge at moderate prices
+            if ep < t.mid_charge_below:
+                return 1, t.mid_rate, f"CHARGE MID: {ep:.1f}c [{src}] < {t.mid_charge_below:.1f}c  SOC {soc:.0f}%"
+            return 1, 0, f"HOLD MID: {ep:.1f}c [{src}] >= {t.mid_charge_below:.1f}c  SOC {soc:.0f}%"
+
+        # HIGH band (high_floor → max_soc) — only charge when very cheap
+        if ep < t.high_charge_below:
+            return 1, t.high_rate, f"CHARGE HIGH: {ep:.1f}c [{src}] < {t.high_charge_below:.1f}c  SOC {soc:.0f}%"
+        return 1, 0, f"HOLD HIGH: {ep:.1f}c [{src}] >= {t.high_charge_below:.1f}c  SOC {soc:.0f}%"
 
     def should_send(self, target_mode, target_rate):
         if not self.enabled:
@@ -593,6 +687,7 @@ class MQTTHandler:
             mqtt.CallbackAPIVersion.VERSION1,
             client_id=CLIENT_ID,
             protocol=mqtt.MQTTv311,
+            clean_session=True,
         )
         self._client.username_pw_set(MQTT_USER, MQTT_PASS)
         self._client.tls_set()
@@ -606,8 +701,27 @@ class MQTTHandler:
             log.info("MQTT connected OK")
             for t in TELEMETRY_TOPICS:
                 client.subscribe(t, qos=1)
+            # Trigger telemetry — gateway doesn't stream on its own
+            self._request_quotas(client)
         else:
             log.error("MQTT connect failed rc=%d", rc)
+
+    def _request_quotas(self, client):
+        """Send latestQuotas GET to trigger telemetry from both devices."""
+        for sn in (GATEWAY_SN, INVERTER_SN):
+            get_topic = f"/app/{SESSION_ID}/{sn}/thing/property/get"
+            msg = json.dumps({
+                "from": "Android",
+                "id": str(int(time.time() * 1000)),
+                "moduleSn": sn,
+                "moduleType": 0,
+                "operateType": "latestQuotas",
+                "params": {},
+                "version": "1.0",
+                "lang": "en-us",
+            })
+            client.publish(get_topic, msg.encode(), qos=1)
+            log.info("Sent latestQuotas GET to %s", sn)
 
     def _on_disconnect(self, client, userdata, rc):
         self.connected = False
@@ -621,11 +735,11 @@ class MQTTHandler:
             self.on_update()
 
     def start(self):
-        self._client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
+        self._client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=120)
         self._client.loop_start()
 
     def publish_command(self, payload: bytes, commands_live: bool = False):
-        """Send a protobuf-encoded command. payload must be bytes from ProtoEncoder."""
+        """Send a protobuf-encoded command. payload must be ready-to-publish bytes."""
         if commands_live:
             rc = self._client.publish(COMMAND_TOPIC, payload, qos=1)
             log.info("CMD LIVE rc=%s  %d bytes: %s", rc.rc, len(payload), payload.hex())
@@ -643,7 +757,7 @@ class Dashboard:
         self.state      = PowerState()
         self.price      = PriceState()
         self.history    = HistoryBuffer()
-        self.thresholds = AutoThresholds()
+        self.thresholds = AutoThresholds.load()
         self.auto       = AutoController()
         self.mqtt       = MQTTHandler(self.state, self.history, self._on_mqtt_update)
         self.comed      = ComedPoller(self.price, self._on_price_update)
@@ -808,13 +922,28 @@ class Dashboard:
         )
         self.lbl_auto_status.pack(anchor="w", padx=12, pady=(2, 4))
 
-        # Threshold adjusters
+        # Threshold adjusters — price thresholds
         thresh_f = tk.Frame(p, bg=C["panel"])
         thresh_f.pack(fill="x", padx=10)
-        self._thresh_row(thresh_f, "Discharge >=",  "discharge_above",   1.0, 30.0)
-        self._thresh_row(thresh_f, "Stop chg >=",   "hold_above",       -5.0, 20.0)
-        self._thresh_row(thresh_f, "Chg normal <",  "charge_normal",    -5.0, 15.0)
-        self._thresh_row(thresh_f, "Chg max <",     "charge_aggressive",-5.0, 10.0)
+        self._thresh_row(thresh_f, "Discharge >=",  "discharge_above",  1.0, 30.0, "c")
+
+        # SOC-tiered charge thresholds (floor model)
+        # Emergency: 0% → low_floor (charge below emergency price cap)
+        # Low: low_floor → mid_floor | Mid: mid_floor → high_floor | High: high_floor → max_soc
+        tk.Label(thresh_f, text="── Charge by SOC ──", bg=C["panel"],
+                 fg=C["border"], font=self.fn_lbl).pack(anchor="w", pady=(4, 0))
+        self._thresh_row(thresh_f, "Emergency <",   "low_floor",        5,   50, "%", 5)
+        self._thresh_row(thresh_f, "  price <",     "emergency_charge_below", -5.0, 30.0, "c")
+        self._thresh_row(thresh_f, "  rate",        "rate_emergency",  600, 12000, "W", 600)
+        self._thresh_row(thresh_f, "Low  →",        "mid_floor",       20,   80, "%", 5)
+        self._thresh_row(thresh_f, "  price <",     "low_charge_below", -5.0, 15.0, "c")
+        self._thresh_row(thresh_f, "  rate",        "low_rate",        600, 12000, "W", 600)
+        self._thresh_row(thresh_f, "Mid  →",        "high_floor",      40,   95, "%", 5)
+        self._thresh_row(thresh_f, "  price <",     "mid_charge_below", -5.0, 10.0, "c")
+        self._thresh_row(thresh_f, "  rate",        "mid_rate",        600, 12000, "W", 600)
+        self._thresh_row(thresh_f, "High →",        "max_soc",         70,  100, "%", 5)
+        self._thresh_row(thresh_f, "  price <",     "high_charge_below",-5.0,  5.0, "c")
+        self._thresh_row(thresh_f, "  rate",        "high_rate",       600, 12000, "W", 600)
 
         # ── Operating Mode ───────────────────────────────────────────────────
         sep("OPERATING MODE")
@@ -851,19 +980,43 @@ class Dashboard:
                  fg=C["dim"], font=self.fn_lbl).pack(anchor="w", padx=12)
 
         self.charge_rate_var = tk.IntVar(value=1000)
+        self._slider_timer = None  # debounce timer for auto-apply
         self.slider = tk.Scale(
-            p, from_=500, to=7200, resolution=100,
+            p, from_=600, to=12000, resolution=100,
             orient="horizontal", variable=self.charge_rate_var,
             bg=C["panel"], fg=C["text"], troughcolor=C["panel2"],
             highlightthickness=0, sliderrelief="flat",
             activebackground=C["amber"], font=self.fn_lbl,
-            command=lambda v: self.lbl_rate.config(text=f"{int(float(v))} W")
+            command=self._on_slider_change
         )
         self.slider.pack(fill="x", padx=10, pady=(0, 2))
 
-        self.lbl_rate = tk.Label(p, text="1000 W", bg=C["panel"],
+        rate_row = tk.Frame(p, bg=C["panel"])
+        rate_row.pack(fill="x", padx=10)
+        self.lbl_rate = tk.Label(rate_row, text="1000 W", bg=C["panel"],
                                   fg=C["amber"], font=self.fn_med)
-        self.lbl_rate.pack()
+        self.lbl_rate.pack(side="left", expand=True)
+        self.btn_apply_rate = tk.Button(
+            rate_row, text="APPLY", font=self.fn_lbl,
+            bg=C["panel2"], fg=C["amber"], relief="flat", bd=0,
+            cursor="hand2", padx=8, pady=2,
+            command=self._cmd_apply_rate
+        )
+        self.btn_apply_rate.pack(side="right")
+
+        # Max charge SOC
+        soc_row = tk.Frame(p, bg=C["panel"])
+        soc_row.pack(fill="x", padx=10, pady=(4, 0))
+        tk.Label(soc_row, text="MAX SOC %", bg=C["panel"],
+                 fg=C["dim"], font=self.fn_lbl, anchor="w").pack(side="left")
+        self.max_soc_var = tk.IntVar(value=100)
+        self.max_soc_spin = tk.Spinbox(
+            soc_row, from_=50, to=100, increment=5,
+            textvariable=self.max_soc_var, width=5,
+            bg=C["panel2"], fg=C["text"], font=self.fn_lbl,
+            buttonbackground=C["panel2"], relief="flat",
+        )
+        self.max_soc_spin.pack(side="right")
 
         chg_row = tk.Frame(p, bg=C["panel"])
         chg_row.pack(fill="x", padx=10, pady=(4, 0))
@@ -887,6 +1040,7 @@ class Dashboard:
             ("grid_w",    "Grid Draw",  "W"),
             ("load_w",    "Home Load",  "W"),
             ("battery_w", "Battery",    "W"),
+            ("soc_pct",   "SOC",        "%"),
             ("volt_a",    "Line A",     "V"),
             ("volt_b",    "Line B",     "V"),
         ]:
@@ -908,78 +1062,87 @@ class Dashboard:
         )
         self.cmd_log.pack(fill="x", padx=10, pady=(2, 10))
 
-    def _thresh_row(self, parent, label, attr, lo, hi):
-        """One threshold row: label  [-]  value  [+]"""
+    def _thresh_row(self, parent, label, attr, lo, hi, unit="c", step=0.5):
+        """One threshold row: label  [-]  value  [+]. Changes trigger automation re-eval."""
         row = tk.Frame(parent, bg=C["panel"])
         row.pack(fill="x", pady=1)
         tk.Label(row, text=label, bg=C["panel"], fg=C["dim"],
                  font=self.fn_lbl, width=14, anchor="w").pack(side="left")
 
         var = tk.StringVar()
+        if unit == "W":
+            fmt = lambda v: f"{int(v)}W"
+        elif unit == "%":
+            fmt = lambda v: f"{v:.0f}{unit}"
+        else:
+            fmt = lambda v: f"{v:.1f}{unit}"
 
         def refresh():
-            var.set(f"{getattr(self.thresholds, attr):.1f}c")
+            var.set(fmt(getattr(self.thresholds, attr)))
 
-        def decr():
+        def _change(delta):
             v = getattr(self.thresholds, attr)
-            setattr(self.thresholds, attr, round(max(lo, v - 0.5), 1))
+            setattr(self.thresholds, attr, round(max(lo, min(hi, v + delta)), 1))
             refresh()
-
-        def incr():
-            v = getattr(self.thresholds, attr)
-            setattr(self.thresholds, attr, round(min(hi, v + 0.5), 1))
-            refresh()
+            self.thresholds.save()
+            # Trigger immediate automation re-evaluation
+            if self.auto.enabled:
+                threading.Thread(target=self._run_automation, daemon=True).start()
 
         refresh()
         tk.Button(row, text="-", font=self.fn_lbl, bg=C["panel2"], fg=C["text"],
                   relief="flat", bd=0, width=2, cursor="hand2",
-                  command=decr).pack(side="left")
+                  command=lambda: _change(-step)).pack(side="left")
         tk.Label(row, textvariable=var, bg=C["panel"], fg=C["amber"],
                  font=self.fn_lbl, width=7).pack(side="left")
         tk.Button(row, text="+", font=self.fn_lbl, bg=C["panel2"], fg=C["text"],
                   relief="flat", bd=0, width=2, cursor="hand2",
-                  command=incr).pack(side="left")
+                  command=lambda: _change(step)).pack(side="left")
 
         self._thresh_vars[attr] = refresh
 
     # ─────────────────────────────────────────────────────────────────────────
     # COMMAND HANDLERS
     # ─────────────────────────────────────────────────────────────────────────
+    def _on_slider_change(self, val):
+        """Called on every slider tick. Updates label + starts 5s debounce for auto-apply."""
+        self.lbl_rate.config(text=f"{int(float(val))} W")
+        # Cancel previous timer, start new 5s debounce
+        if self._slider_timer is not None:
+            self.root.after_cancel(self._slider_timer)
+        self._slider_timer = self.root.after(5000, self._cmd_apply_rate)
+
+    def _cmd_apply_rate(self):
+        """Send charge power command (rate + max SOC) without toggling charge on/off."""
+        self._slider_timer = None
+        rate = self.charge_rate_var.get()
+        max_soc = self.max_soc_var.get()
+        self._log_cmd(f"SET RATE {rate}W  SOC<={max_soc}%")
+        config_write = build_charge_power_command(rate, max_soc=max_soc)
+        payload = _build_and_wrap(config_write)
+        self.mqtt.publish_command(payload, self._commands_live)
+
     def _cmd_mode(self, mode: str):
-        target = -1 if mode == "backup" else 2
-        self._log_cmd(f"MODE -> {mode.upper()}  (REST targetMode={target})")
-        if not self._commands_live:
-            return
-        if not REST_JWT:
-            self._log_cmd("ERROR: REST_JWT missing in credentials file")
-            return
-        url  = "https://api-a.ecoflow.com/tou-service/goe/ai-mode/notify-mode-changed"
-        hdrs = {"Authorization": f"Bearer {REST_JWT}", "Content-Type": "application/json",
-                "lang": "en-us", "countryCode": "US", "platform": "android",
-                "version": "6.11.0.1731", "User-Agent": "okhttp/4.11.0", "X-Appid": "-1"}
-        body = json.dumps({"sn": GATEWAY_SN, "systemNo": "", "targetMode": target}).encode()
-        def _do_rest():
-            try:
-                req  = urllib.request.Request(url, data=body, headers=hdrs, method="POST")
-                resp = urllib.request.urlopen(req, timeout=15)
-                result = json.loads(resp.read())
-                ok = result.get("code") == "0"
-                self._log_cmd(f"REST {'OK' if ok else 'FAIL'}: {result.get('message','?')}")
-            except Exception as e:
-                self._log_cmd(f"REST ERROR: {e}")
-        threading.Thread(target=_do_rest, daemon=True).start()
+        self._log_cmd(f"MODE -> {mode.upper()}")
+        self_powered = (mode == "self_powered")
+        config_write = build_mode_command(self_powered=self_powered)
+        payload = _build_and_wrap(config_write)
+        self.mqtt.publish_command(payload, self._commands_live)
 
     def _cmd_charge_start(self, rate: int = None):
         rate = rate or self.charge_rate_var.get()
-        seq  = int(time.time()) & 0xFFFF
-        self._log_cmd(f"CHARGE START  {rate} W  (seq={seq})")
-        payload = ProtoEncoder.charge_config(GATEWAY_SN, rate, pause=0, seq=seq)
+        max_soc = self.max_soc_var.get()
+        self._log_cmd(f"CHARGE START  {rate}W  SOC<={max_soc}%")
+        # Send charge ON + power level + SOC limit as a single ConfigWrite
+        config_write = (build_charge_command(enable=True)
+                        + build_charge_power_command(rate, max_soc=max_soc))
+        payload = _build_and_wrap(config_write)
         self.mqtt.publish_command(payload, self._commands_live)
 
     def _cmd_charge_stop(self):
         self._log_cmd("CHARGE STOP")
-        payload = ProtoEncoder.charge_config(GATEWAY_SN, 0, pause=1,
-                                             seq=int(time.time()) & 0xFFFF)
+        config_write = build_charge_command(enable=False)
+        payload = _build_and_wrap(config_write)
         self.mqtt.publish_command(payload, self._commands_live)
 
     def _toggle_commands(self):
@@ -1008,8 +1171,8 @@ class Dashboard:
     # ─────────────────────────────────────────────────────────────────────────
     def _on_mqtt_update(self):
         with self._lock: self._dirty = True
-        # Re-evaluate automation when power state changes (SOC thresholds)
-        if self.auto.enabled and self.price.price_hour is not None:
+        # Re-evaluate automation when power state changes (SOC may cross band boundary)
+        if self.auto.enabled and self.price.effective_price is not None:
             threading.Thread(target=self._run_automation, daemon=True).start()
 
     def _on_price_update(self):
@@ -1048,8 +1211,22 @@ class Dashboard:
     # ─────────────────────────────────────────────────────────────────────────
     # TICK & DRAWING
     # ─────────────────────────────────────────────────────────────────────────
+    _last_quota_request = 0.0
+    _last_auto_reeval   = 0.0
+
     def _tick(self):
         with self._lock: self._dirty = False
+        now = time.time()
+        # Re-request telemetry every 30s if data is stale
+        if (self.mqtt.connected and self.state.stale
+                and now - Dashboard._last_quota_request > 30):
+            Dashboard._last_quota_request = now
+            self.mqtt._request_quotas(self.mqtt._client)
+        # Periodic automation re-evaluation every 30s (independent of data events)
+        if (self.auto.enabled and now - Dashboard._last_auto_reeval > 30
+                and self.price.effective_price is not None):
+            Dashboard._last_auto_reeval = now
+            threading.Thread(target=self._run_automation, daemon=True).start()
         self._update_topbar()
         self._update_price_panel()
         self._update_controls()
@@ -1081,10 +1258,9 @@ class Dashboard:
             fg=C["green"] if self.state.op_mode == 2 else C["blue"])
 
         ps = self.price
-        if ps.price_hour is not None or ps.price_5min is not None:
+        if ps.effective_price is not None or ps.price_hour is not None or ps.price_5min is not None:
             arrow = {"rising": " ↑", "falling": " ↓", "flat": " →"}.get(ps.trend, "")
-            # Top bar shows hour avg (billing price) with trend arrow
-            primary = ps.price_hour if ps.price_hour is not None else ps.price_5min
+            primary = ps.effective_price or ps.price_hour or ps.price_5min
             _, top_color = _classify_price(primary)
             self.lbl_price_top.config(
                 text=f"PRICE: {primary:.1f}c{arrow}", fg=top_color)
@@ -1111,14 +1287,15 @@ class Dashboard:
             self._draw_price_sparkline()
             return
 
-        # 5-min price is the secondary (real-time) number
+        # Secondary info: 5-min price + running average
         if ps.price_5min is not None:
             arrow = {"rising": "↑ RISING", "falling": "↓ FALLING",
                      "flat":   "→ STABLE"}.get(ps.trend, "")
             self.lbl_trend.config(text=arrow, fg=ps.tier_color)
-            self.lbl_hour_avg.config(
-                text=f"5-min: {ps.price_5min:.1f}c  ({ps.tier})",
-                fg=ps.tier_color)
+            parts = [f"5-min: {ps.price_5min:.1f}c"]
+            if ps.running_hour_avg is not None:
+                parts.append(f"Running: {ps.running_hour_avg:.1f}c")
+            self.lbl_hour_avg.config(text="  |  ".join(parts), fg=ps.tier_color)
         else:
             self.lbl_trend.config(text="", fg=C["dim"])
             self.lbl_hour_avg.config(text="5-min: —", fg=C["dim"])
@@ -1151,11 +1328,13 @@ class Dashboard:
             c.create_text(W - 2, zy - 1, text="0", fill=C["dim"],
                           font=self.fn_lbl, anchor="se")
 
-        # Charge-max threshold line (green dashed) — fires below this
-        t_agg = self.thresholds.charge_aggressive
-        if lo - 1 <= t_agg <= hi + 1:
-            c.create_line(0, py(t_agg), W, py(t_agg),
-                          fill=C["green_dim"], width=1, dash=(3, 5))
+        # Charge threshold lines (green dashed) — one per SOC band
+        for t_chg, shade in [(self.thresholds.low_charge_below,  "#2a5a2a"),
+                             (self.thresholds.mid_charge_below,  "#1a4a22"),
+                             (self.thresholds.high_charge_below, "#0f3a15")]:
+            if lo - 1 <= t_chg <= hi + 1:
+                c.create_line(0, py(t_chg), W, py(t_chg),
+                              fill=shade, width=1, dash=(3, 5))
 
         # Discharge threshold reference line (red dashed)
         thresh = self.thresholds.discharge_above
@@ -1243,16 +1422,25 @@ class Dashboard:
     def _update_readouts(self):
         s = self.state
         vals = {"grid_w": s.grid_w, "load_w": s.load_w, "battery_w": s.battery_w,
-                "volt_a": s.volt_a,  "volt_b": s.volt_b}
+                "soc_pct": s.soc_pct, "volt_a": s.volt_a,  "volt_b": s.volt_b}
         for key, (var, lbl, unit) in self.readout_vars.items():
             v = vals[key]
             if v is None:
                 var.set("—"); lbl.config(fg=C["dim"])
             else:
-                var.set(f"{v:+.0f} W" if key == "battery_w" else
-                        f"{v:.0f} W"  if unit == "W" else f"{v:.1f} V")
+                if key == "battery_w":
+                    var.set(f"{v:+.0f} W")
+                elif key == "soc_pct":
+                    var.set(f"{v:.0f}%")
+                elif unit == "W":
+                    var.set(f"{v:.0f} W")
+                else:
+                    var.set(f"{v:.1f} V")
+
                 if key == "battery_w":
                     lbl.config(fg=C["green"] if v > 50 else (C["red"] if v < -50 else C["dim"]))
+                elif key == "soc_pct":
+                    lbl.config(fg=C["red"] if v < 20 else (C["amber"] if v < 50 else C["green"]))
                 elif key == "grid_w":
                     lbl.config(fg=C["amber"] if (v or 0) > 100 else C["green"])
                 else:
@@ -1316,8 +1504,10 @@ class Dashboard:
 
         gdir = "IMPORT" if gw > 0 else ("EXPORT" if gw < 0 else "IDLE")
         bdir = "CHG" if bw > 50 else ("DSG" if bw < -50 else "IDLE")
+        soc_str = f"{s.soc_pct:.0f}%" if s.soc_pct is not None else ""
+        batt_sub = f"{bdir}  {soc_str}" if soc_str else bdir
         node(grid_x, grid_y, "GRID",    gdir,          C["flow_grid"], "⚡")
-        node(batt_x, batt_y, "BATTERY", bdir,          bc,             "🔋")
+        node(batt_x, batt_y, "BATTERY", batt_sub,      bc,             "🔋")
         node(load_x, load_y, "HOME",    f"{lw:.0f}W",  C["flow_load"], "🏠")
 
         # Gateway centre

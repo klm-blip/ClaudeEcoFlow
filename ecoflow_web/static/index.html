@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Home Energy Dashboard</title>
+<style>
+/* ─── Reset & Base ─────────────────────────────────────────────────────── */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2333; --border:#30363d;
+  --text:#e6edf3; --dim:#8b949e;
+  --amber:#f0a500; --green:#3fb950; --red:#f85149; --blue:#58a6ff;
+  --teal:#1d9e75; --charge-green:#639922; --discharge-amber:#EF9F27;
+  --purple:#bc8cff;
+  --font-mono:'Consolas','Monaco','Courier New',monospace;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow-x:hidden;min-height:100vh}
+button{cursor:pointer;border:none;font-family:inherit;font-size:0.85rem;border-radius:6px;padding:8px 16px;transition:all .15s}
+button:active{transform:scale(0.97)}
+
+/* ─── Top Bar ──────────────────────────────────────────────────────────── */
+.topbar{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--border)}
+.topbar h1{font-size:1.1rem;font-weight:600}
+.topbar .badges{display:flex;gap:8px;align-items:center}
+.badge{padding:3px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;text-transform:uppercase}
+.badge-conn{background:#1a4a22;color:var(--green)}
+.badge-conn.off{background:#4a1a1a;color:var(--red)}
+.badge-live{background:#1a4a22;color:var(--green);cursor:pointer}
+.badge-dry{background:#7a5200;color:var(--amber);cursor:pointer}
+.clock{font-size:0.85rem;color:var(--dim);font-variant-numeric:tabular-nums}
+
+/* ─── Three Pillars ────────────────────────────────────────────────────── */
+.pillars{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:8px 12px}
+.pill{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center}
+.pill .hero{font-size:1.8rem;font-weight:700;line-height:1.1}
+.pill .subtitle{font-size:0.8rem;color:var(--dim);margin-top:2px}
+.pill .detail{font-size:0.72rem;color:var(--dim);margin-top:4px}
+.sparkline-bar{display:flex;align-items:flex-end;justify-content:center;gap:2px;height:24px;margin-top:6px}
+.sparkline-bar span{width:4px;border-radius:1px;min-height:2px}
+.soc-bar{height:6px;border-radius:3px;background:var(--border);margin-top:8px;overflow:hidden;position:relative}
+.soc-bar .fill{height:100%;border-radius:3px;transition:width .5s}
+.soc-bar .marker{position:absolute;top:-2px;width:3px;height:10px;background:var(--text);border-radius:1px;transition:left .5s}
+
+/* ─── Power Flow Diagram ───────────────────────────────────────────────── */
+.flow-container{padding:8px 12px}
+.flow-svg{width:100%;max-width:700px;margin:0 auto;display:block}
+@keyframes flowRight{from{stroke-dashoffset:20}to{stroke-dashoffset:0}}
+@keyframes flowLeft{from{stroke-dashoffset:0}to{stroke-dashoffset:20}}
+@keyframes flowDown{from{stroke-dashoffset:20}to{stroke-dashoffset:0}}
+@keyframes flowUp{from{stroke-dashoffset:0}to{stroke-dashoffset:20}}
+.flow-line{fill:none;stroke-width:2.5;stroke-dasharray:8,4}
+.flow-line.active{animation-duration:0.8s;animation-timing-function:linear;animation-iteration-count:infinite}
+.flow-line.idle{stroke:var(--border);stroke-width:1.5;opacity:0.3;stroke-dasharray:6,6}
+.flow-node{fill:var(--panel);stroke-width:2}
+.flow-label{fill:var(--text);font-size:11px;text-anchor:middle;font-family:inherit}
+.flow-watts{font-size:10px;text-anchor:middle;font-family:inherit;font-weight:600}
+
+/* ─── Automation Strip ─────────────────────────────────────────────────── */
+.auto-strip{margin:0 12px;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.82rem;display:flex;align-items:center;gap:8px}
+.auto-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.auto-dot.on{background:var(--green)}
+.auto-dot.off{background:var(--dim)}
+
+/* ─── Two Column Section ───────────────────────────────────────────────── */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 12px}
+.section-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px}
+.section-title{font-size:0.75rem;text-transform:uppercase;color:var(--dim);letter-spacing:0.05em;margin-bottom:10px;font-weight:600}
+
+/* ─── SOC Bands ────────────────────────────────────────────────────────── */
+.band{border:1px solid var(--border);border-radius:8px;margin-bottom:6px;overflow:hidden;transition:all .2s}
+.band-header{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;cursor:pointer;font-size:0.82rem}
+.band-header:hover{background:var(--panel2)}
+.band-name{font-weight:600}
+.band-summary{color:var(--dim);font-size:0.75rem}
+.band-active-marker{background:var(--green);color:#000;font-size:0.65rem;padding:1px 6px;border-radius:8px;font-weight:700}
+.band-body{display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--panel2)}
+.band.expanded .band-body{display:block}
+.adj-row{display:flex;align-items:center;justify-content:space-between;margin:4px 0}
+.adj-label{font-size:0.78rem;color:var(--dim);min-width:70px}
+.adj-value{font-size:0.85rem;font-weight:600;min-width:60px;text-align:center;font-variant-numeric:tabular-nums}
+.adj-btn{background:var(--panel);border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:6px;font-size:1rem;display:flex;align-items:center;justify-content:center;padding:0}
+.adj-btn:hover{background:var(--border)}
+.discharge-row{padding:6px 0;font-size:0.82rem;display:flex;align-items:center;justify-content:space-between}
+
+/* ─── Controls ─────────────────────────────────────────────────────────── */
+.mode-btns{display:flex;gap:6px;margin-bottom:12px}
+.mode-btn{flex:1;padding:10px;background:var(--panel2);border:1px solid var(--border);color:var(--dim);font-weight:600;font-size:0.85rem}
+.mode-btn.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.slider-group{margin:10px 0}
+.slider-group label{font-size:0.78rem;color:var(--dim);display:flex;justify-content:space-between}
+.slider-group input[type=range]{width:100%;margin:4px 0;accent-color:var(--blue)}
+.charge-btns{display:flex;gap:6px;margin:10px 0}
+.charge-btns button{flex:1;padding:10px;font-weight:600}
+.btn-start{background:var(--charge-green);color:#fff}
+.btn-stop{background:var(--discharge-amber);color:#fff}
+.auto-toggle{display:flex;gap:6px;margin-top:10px}
+.auto-toggle button{flex:1;padding:10px;background:var(--panel2);border:1px solid var(--border);color:var(--dim);font-weight:600}
+.auto-toggle button.active{background:var(--green);color:#fff;border-color:var(--green)}
+
+/* ─── Readings ─────────────────────────────────────────────────────────── */
+.readings{margin-top:12px}
+.reading-row{display:flex;justify-content:space-between;padding:3px 0;font-size:0.82rem}
+.reading-row .lbl{color:var(--dim)}
+.reading-row .val{font-weight:600;font-variant-numeric:tabular-nums}
+
+/* ─── History Chart ────────────────────────────────────────────────────── */
+.chart-section{padding:8px 12px}
+.chart-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px}
+.chart-canvas{width:100%;height:120px}
+
+/* ─── Command Log ──────────────────────────────────────────────────────── */
+.log-section{padding:8px 12px 16px}
+.log-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px;max-height:150px;overflow-y:auto}
+.log-entry{font-family:var(--font-mono);font-size:0.72rem;padding:2px 0;white-space:nowrap}
+.log-live{color:var(--green)}
+.log-dry{color:var(--amber)}
+
+/* ─── Mobile Tabs ──────────────────────────────────────────────────────── */
+.tab-bar{display:none}
+.tab-btn{flex:1;padding:10px;background:var(--panel);border:none;color:var(--dim);font-weight:600;font-size:0.85rem;border-bottom:2px solid transparent}
+.tab-btn.active{color:var(--blue);border-bottom-color:var(--blue)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+/* ─── Mobile Layout ────────────────────────────────────────────────────── */
+@media(max-width:768px){
+  .desktop-only{display:none!important}
+  .tab-bar{display:flex;position:sticky;top:41px;z-index:99;background:var(--panel);border-bottom:1px solid var(--border)}
+  .pillars{grid-template-columns:1fr 1fr 1fr;gap:4px;padding:6px 8px}
+  .pill .hero{font-size:1.3rem}
+  .pill .subtitle{font-size:0.72rem}
+  .two-col{grid-template-columns:1fr;padding:8px}
+  .flow-container{padding:4px 8px}
+  .adj-btn{width:44px;height:44px;font-size:1.2rem}
+  .mode-btn,.charge-btns button,.auto-toggle button{padding:14px;font-size:0.9rem}
+}
+@media(min-width:769px){
+  .mobile-only{display:none!important}
+  .tab-content{display:block!important}
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ TOP BAR ═══════════════════════════════════════════════════════════ -->
+<div class="topbar">
+  <h1>Home Energy</h1>
+  <div class="badges">
+    <span id="badge-conn" class="badge badge-conn off">Connecting...</span>
+    <span id="badge-live" class="badge badge-dry" onclick="send({cmd:'toggle_live'})">DRY RUN</span>
+  </div>
+  <span id="clock" class="clock">--:--</span>
+</div>
+
+<!-- ═══ MOBILE TAB BAR ════════════════════════════════════════════════════ -->
+<div class="tab-bar mobile-only">
+  <button class="tab-btn active" onclick="switchTab('status')">Status</button>
+  <button class="tab-btn" onclick="switchTab('controls')">Controls</button>
+  <button class="tab-btn" onclick="switchTab('history')">History</button>
+</div>
+
+<!-- ═══ STATUS TAB (mobile) / always visible (desktop) ════════════════════ -->
+<div id="tab-status" class="tab-content active">
+
+<!-- Three Pillars -->
+<div class="pillars">
+  <div class="pill" id="pill-price">
+    <div class="hero" id="price-hero">--</div>
+    <div class="subtitle" id="price-sub">—</div>
+    <div class="detail" id="price-detail"></div>
+    <div class="sparkline-bar" id="price-sparkline"></div>
+  </div>
+  <div class="pill" id="pill-battery">
+    <div class="hero" id="batt-hero">--%</div>
+    <div class="subtitle" id="batt-sub">—</div>
+    <div class="detail" id="batt-detail">Delta Pro Ultra</div>
+    <div class="soc-bar"><div class="fill" id="soc-fill"></div><div class="marker" id="soc-marker"></div></div>
+  </div>
+  <div class="pill" id="pill-power">
+    <div class="hero" id="power-hero">-- W</div>
+    <div class="subtitle" id="power-sub">—</div>
+    <div class="detail" id="power-detail"></div>
+  </div>
+</div>
+
+<!-- Power Flow Diagram -->
+<div class="flow-container">
+  <svg class="flow-svg" viewBox="0 0 700 320" id="flow-svg">
+    <defs>
+      <filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+
+    <!-- Flow lines (drawn behind nodes) -->
+    <!-- Grid → House -->
+    <path id="line-grid-house" class="flow-line idle" d="M 130,160 C 200,160 240,160 280,160"/>
+    <!-- House → Home -->
+    <path id="line-house-home" class="flow-line idle" d="M 420,160 C 460,160 500,160 570,160"/>
+    <!-- Battery → House -->
+    <path id="line-batt-house" class="flow-line idle" d="M 180,275 C 220,275 280,250 310,200"/>
+    <!-- Solar → House (future) -->
+    <path id="line-solar-house" class="flow-line idle" d="M 350,60 L 350,120" style="opacity:0.15"/>
+
+    <!-- Wattage labels on lines -->
+    <text id="watts-grid" class="flow-watts" x="205" y="150" fill="var(--dim)"></text>
+    <text id="watts-home" class="flow-watts" x="495" y="150" fill="var(--dim)"></text>
+    <text id="watts-batt" class="flow-watts" x="225" y="245" fill="var(--dim)"></text>
+
+    <!-- Grid node -->
+    <circle cx="80" cy="160" r="42" class="flow-node" stroke="var(--blue)"/>
+    <text x="80" y="153" class="flow-label" fill="var(--blue)">Grid</text>
+    <text id="grid-label" x="80" y="170" class="flow-label" fill="var(--dim)" style="font-size:9px">—</text>
+    <text id="grid-watts" x="80" y="183" class="flow-label" fill="var(--blue)" style="font-size:10px;font-weight:600"></text>
+
+    <!-- House (center) -->
+    <g id="house-group" transform="translate(350,160)">
+      <polygon points="0,-50 60,-10 60,50 -60,50 -60,-10" fill="var(--panel)" stroke="var(--teal)" stroke-width="2"/>
+      <text y="5" class="flow-label" fill="var(--teal)">ESG</text>
+      <text id="house-mode" y="22" class="flow-label" fill="var(--dim)" style="font-size:9px">—</text>
+    </g>
+
+    <!-- Home load node -->
+    <circle cx="620" cy="160" r="42" class="flow-node" stroke="var(--teal)"/>
+    <text x="620" y="153" class="flow-label" fill="var(--teal)">Home</text>
+    <text id="home-label" x="620" y="170" class="flow-label" fill="var(--dim)" style="font-size:9px">—</text>
+    <text id="home-watts" x="620" y="183" class="flow-label" fill="var(--teal)" style="font-size:10px;font-weight:600"></text>
+
+    <!-- Battery node -->
+    <rect x="105" y="258" width="80" height="44" rx="8" class="flow-node" stroke="var(--charge-green)" id="batt-rect"/>
+    <rect x="109" y="290" width="0" height="8" rx="3" fill="var(--charge-green)" opacity="0.4" id="batt-fill-bar"/>
+    <text x="145" y="275" class="flow-label" style="font-size:10px;font-weight:600" id="batt-node-label" fill="var(--charge-green)">Battery</text>
+    <text id="batt-label" x="145" y="289" class="flow-label" fill="var(--dim)" style="font-size:9px">—</text>
+
+    <!-- Solar node (dimmed placeholder) -->
+    <g style="opacity:0.2">
+      <rect x="315" y="20" width="70" height="40" rx="4" class="flow-node" stroke="var(--discharge-amber)" stroke-dasharray="4,3"/>
+      <text x="350" y="42" class="flow-label" fill="var(--discharge-amber)" style="font-size:9px">Solar</text>
+      <text x="350" y="55" class="flow-label" fill="var(--dim)" style="font-size:7px">coming soon</text>
+    </g>
+  </svg>
+</div>
+
+<!-- Automation Strip -->
+<div class="auto-strip">
+  <div id="auto-dot" class="auto-dot off"></div>
+  <span id="auto-text">Automation disabled — manual control</span>
+</div>
+
+<!-- Readings (mobile shows here, desktop in two-col) -->
+<div class="mobile-only" style="padding:8px">
+  <div class="section-card">
+    <div id="readings-mobile"></div>
+  </div>
+</div>
+</div><!-- /tab-status -->
+
+<!-- ═══ CONTROLS TAB ══════════════════════════════════════════════════════ -->
+<div id="tab-controls" class="tab-content">
+<div class="two-col">
+  <!-- Left: SOC Bands -->
+  <div class="section-card">
+    <div class="section-title">SOC Charge Bands</div>
+
+    <!-- High band -->
+    <div class="band" id="band-high" onclick="toggleBand('high')">
+      <div class="band-header">
+        <span><span class="band-name">High</span> <span id="band-high-range" style="color:var(--dim);font-size:0.75rem">85→95%</span></span>
+        <span class="band-summary" id="band-high-sum">&lt;-1.0c · 1500W</span>
+      </div>
+      <div class="band-body" onclick="event.stopPropagation()">
+        <div class="adj-row"><span class="adj-label">Ceiling</span><button class="adj-btn" onclick="adjThreshold('max_soc',-5)">−</button><span class="adj-value" id="adj-max_soc">95%</span><button class="adj-btn" onclick="adjThreshold('max_soc',5)">+</button></div>
+        <div class="adj-row"><span class="adj-label">Price &lt;</span><button class="adj-btn" onclick="adjThreshold('high_charge_below',-0.5)">−</button><span class="adj-value" id="adj-high_charge_below">-1.0c</span><button class="adj-btn" onclick="adjThreshold('high_charge_below',0.5)">+</button></div>
+        <div class="adj-row"><span class="adj-label">Rate</span><button class="adj-btn" onclick="adjThreshold('high_rate',-500)">−</button><span class="adj-value" id="adj-high_rate">1500W</span><button class="adj-btn" onclick="adjThreshold('high_rate',500)">+</button></div>
+      </div>
+    </div>
+
+    <!-- Mid band -->
+    <div class="band" id="band-mid" onclick="toggleBand('mid')">
+      <div class="band-header">
+        <span><span class="band-name">Mid</span> <span id="band-mid-range" style="color:var(--dim);font-size:0.75rem">60→85%</span></span>
+        <span class="band-summary" id="band-mid-sum">&lt;1.5c · 3000W</span>
+      </div>
+      <div class="band-body" onclick="event.stopPropagation()">
+        <div class="adj-row"><span class="adj-label">Floor</span><button class="adj-btn" onclick="adjThreshold('high_floor',-5)">−</button><span class="adj-value" id="adj-high_floor">85%</span><button class="adj-btn" onclick="adjThreshold('high_floor',5)">+</button></div>
+        <div class="adj-row"><span class="adj-label">Price &lt;</span><button class="adj-btn" onclick="adjThreshold('mid_charge_below',-0.5)">−</button><span class="adj-value" id="adj-mid_charge_below">1.5c</span><button class="adj-btn" onclick="adjThreshold('mid_charge_below',0.5)">+</button></div>
+        <div class="adj-row"><span class="adj-label">Rate</span><button class="adj-btn" onclick="adjThreshold('mid_rate',-500)">−</button><span class="adj-value" id="adj-mid_rate">3000W</span><button class="adj-btn" onclick="adjThreshold('mid_rate',500)">+</button></div>
+      </div>
+    </div>
+
+    <!-- Low band -->
+    <div class="band" id="band-low" onclick="toggleBand('low')">
+      <div class="band-header">
+        <span><span class="band-name">Low</span> <span id="band-low-range" style="color:var(--dim);font-size:0.75rem">20→60%</span></span>
+        <span class="band-summary" id="band-low-sum">&lt;2.0c · 6000W</span>
+      </div>
+      <div class="band-body" onclick="event.stopPropagation()">
+        <div class="adj-row"><span class="adj-label">Floor</span><button class="adj-btn" onclick="adjThreshold('mid_floor',-5)">−</button><span class="adj-value" id="adj-mid_floor">60%</span><button class="adj-btn" onclick="adjThreshold('mid_floor',5)">+</button></div>
+        <div class="adj-row"><span class="adj-label">Price &lt;</span><button class="adj-btn" onclick="adjThreshold('low_charge_below',-0.5)">−</button><span class="adj-value" id="adj-low_charge_below">2.0c</span><button class="adj-btn" onclick="adjThreshold('low_charge_below',0.5)">+</button></div>
+        <div class="adj-row"><span class="adj-label">Rate</span><button class="adj-btn" onclick="adjThreshold('low_rate',-500)">−</button><span class="adj-value" id="adj-low_rate">6000W</span><button class="adj-btn" onclick="adjThreshold('low_rate',500)">+</button></div>
+      </div>
+    </div>
+
+    <!-- Emergency band -->
+    <div class="band" id="band-emg" onclick="toggleBand('emg')">
+      <div class="band-header">
+        <span><span class="band-name" style="color:var(--red)">Emergency</span> <span id="band-emg-range" style="color:var(--dim);font-size:0.75rem">0→20%</span></span>
+        <span class="band-summary" id="band-emg-sum">&lt;6.0c · 6000W</span>
+      </div>
+      <div class="band-body" onclick="event.stopPropagation()">
+        <div class="adj-row"><span class="adj-label">Floor</span><button class="adj-btn" onclick="adjThreshold('low_floor',-5)">−</button><span class="adj-value" id="adj-low_floor">20%</span><button class="adj-btn" onclick="adjThreshold('low_floor',5)">+</button></div>
+        <div class="adj-row"><span class="adj-label">Max price</span><button class="adj-btn" onclick="adjThreshold('emergency_charge_below',-0.5)">−</button><span class="adj-value" id="adj-emergency_charge_below">6.0c</span><button class="adj-btn" onclick="adjThreshold('emergency_charge_below',0.5)">+</button></div>
+        <div class="adj-row"><span class="adj-label">Rate</span><button class="adj-btn" onclick="adjThreshold('rate_emergency',-500)">−</button><span class="adj-value" id="adj-rate_emergency">6000W</span><button class="adj-btn" onclick="adjThreshold('rate_emergency',500)">+</button></div>
+      </div>
+    </div>
+
+    <!-- Discharge threshold -->
+    <div class="discharge-row">
+      <span>Discharge above</span>
+      <span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('discharge_above',-0.5)">−</button>
+        <span class="adj-value" id="adj-discharge_above" style="display:inline-block;min-width:50px">8.0c</span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('discharge_above',0.5)">+</button>
+      </span>
+    </div>
+  </div>
+
+  <!-- Right: Mode / Charge / Readings -->
+  <div class="section-card">
+    <div class="section-title">Operating Mode</div>
+    <div class="mode-btns">
+      <button class="mode-btn" id="btn-backup" onclick="sendMode('backup')">Backup</button>
+      <button class="mode-btn" id="btn-selfpwr" onclick="sendMode('self_powered')">Self-Powered</button>
+    </div>
+    <div id="override-row" style="display:flex;margin:-6px 0 8px;font-size:0.78rem;color:var(--dim);align-items:center;gap:8px">
+      <span>Override: <select id="override-minutes" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:0.78rem">
+        <option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 hr</option><option value="120">2 hr</option>
+      </select></span>
+      <span id="override-status" style="flex:1"></span>
+      <button id="btn-cancel-override" style="display:none;background:var(--panel2);border:1px solid var(--border);color:var(--amber);padding:4px 10px;font-size:0.72rem" onclick="send({cmd:'cancel_override'})">Cancel Override</button>
+    </div>
+
+    <div class="section-title">Charge Control</div>
+    <div class="slider-group">
+      <label>Rate <span id="rate-val">3,000 W</span></label>
+      <input type="range" id="slider-rate" min="600" max="12000" step="500" value="3000" oninput="updateSliderLabel()">
+    </div>
+    <div class="slider-group">
+      <label>Max SOC <span id="soc-val">95%</span></label>
+      <input type="range" id="slider-soc" min="50" max="100" step="5" value="95" oninput="updateSliderLabel()">
+    </div>
+    <div class="charge-btns">
+      <button class="btn-start" onclick="sendCharge(true)">Start Charge</button>
+      <button class="btn-stop" onclick="sendCharge(false)">Stop Charge</button>
+    </div>
+
+    <div class="section-title">Automation</div>
+    <div class="auto-toggle">
+      <button id="btn-auto-on" onclick="send({cmd:'toggle_auto'})">Enabled</button>
+      <button id="btn-auto-off" onclick="send({cmd:'toggle_auto'})">Disabled</button>
+    </div>
+
+    <div class="section-title desktop-only" style="margin-top:14px">Readings</div>
+    <div id="readings-desktop" class="readings desktop-only"></div>
+  </div>
+</div>
+</div><!-- /tab-controls -->
+
+<!-- ═══ HISTORY TAB ═══════════════════════════════════════════════════════ -->
+<div id="tab-history" class="tab-content">
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Power History (15 min)</div>
+    <canvas id="history-canvas" class="chart-canvas"></canvas>
+  </div>
+</div>
+<div class="log-section">
+  <div class="section-title" style="padding:0 2px 6px;color:var(--dim)">Command Log</div>
+  <div class="log-card" id="command-log"></div>
+</div>
+</div><!-- /tab-history -->
+
+<script>
+// ═══ WebSocket ═══════════════════════════════════════════════════════════
+let ws = null, state = null, reconnectTimer = null;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+  ws.onopen = () => {
+    document.getElementById('badge-conn').textContent = 'Live';
+    document.getElementById('badge-conn').className = 'badge badge-conn';
+    if (reconnectTimer) { clearInterval(reconnectTimer); reconnectTimer = null; }
+  };
+  ws.onclose = () => {
+    document.getElementById('badge-conn').textContent = 'Disconnected';
+    document.getElementById('badge-conn').className = 'badge badge-conn off';
+    if (!reconnectTimer) reconnectTimer = setInterval(connect, 3000);
+  };
+  ws.onmessage = (e) => {
+    try { state = JSON.parse(e.data); render(); } catch(err) { console.error(err); }
+  };
+}
+
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+function sendMode(value) {
+  const overrideMin = parseInt(document.getElementById('override-minutes').value);
+  send({cmd:'mode', value, override_minutes: overrideMin});
+}
+
+function sendCharge(start) {
+  const rate = parseInt(document.getElementById('slider-rate').value);
+  const soc = parseInt(document.getElementById('slider-soc').value);
+  if (start) send({cmd:'charge_start', rate, max_soc: soc});
+  else send({cmd:'charge_stop'});
+}
+
+// ═══ Threshold Adjustment ════════════════════════════════════════════════
+function adjThreshold(key, delta) {
+  if (!state) return;
+  let val = state.thresholds[key];
+  if (val === undefined) return;
+  val += delta;
+  // Clamp
+  const clamps = {
+    discharge_above:[1,30], low_floor:[5,50], mid_floor:[20,80], high_floor:[40,95], max_soc:[70,100],
+    low_charge_below:[-5,15], mid_charge_below:[-5,10], high_charge_below:[-5,5],
+    emergency_charge_below:[-5,30],
+    low_rate:[600,12000], mid_rate:[600,12000], high_rate:[600,12000], rate_emergency:[600,12000]
+  };
+  if (clamps[key]) { val = Math.max(clamps[key][0], Math.min(clamps[key][1], val)); }
+  // Round to avoid float drift
+  val = Math.round(val * 10) / 10;
+  send({cmd:'set_threshold', key, value: val});
+}
+
+// ═══ Tab Switching ═══════════════════════════════════════════════════════
+function switchTab(name) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    if (btn.textContent.toLowerCase() === name) btn.classList.add('active');
+  });
+}
+
+function toggleBand(name) {
+  const el = document.getElementById('band-' + name);
+  const wasExpanded = el.classList.contains('expanded');
+  document.querySelectorAll('.band').forEach(b => b.classList.remove('expanded'));
+  if (!wasExpanded) el.classList.add('expanded');
+}
+
+function updateSliderLabel() {
+  const r = document.getElementById('slider-rate').value;
+  const s = document.getElementById('slider-soc').value;
+  document.getElementById('rate-val').textContent = Number(r).toLocaleString() + ' W';
+  document.getElementById('soc-val').textContent = s + '%';
+}
+
+// ═══ Render ══════════════════════════════════════════════════════════════
+function render() {
+  if (!state) return;
+  const p = state.power, pr = state.price, t = state.thresholds, au = state.auto;
+
+  // Clock
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+
+  // Live/Dry badge
+  const lb = document.getElementById('badge-live');
+  if (state.commands_live) { lb.textContent = 'LIVE'; lb.className = 'badge badge-live'; }
+  else { lb.textContent = 'DRY RUN'; lb.className = 'badge badge-dry'; }
+
+  // MQTT connection
+  const cb = document.getElementById('badge-conn');
+  if (state.mqtt_connected) { cb.textContent = 'Live'; cb.className = 'badge badge-conn'; }
+  else { cb.textContent = 'MQTT Off'; cb.className = 'badge badge-conn off'; }
+
+  // ─── Price pill ────────────────────────────────────────────────────
+  const ep = pr.effective_price;
+  document.getElementById('price-hero').textContent = ep != null ? ep.toFixed(1) + '\u00a2' : '--';
+  document.getElementById('price-hero').style.color = pr.tier_color || 'var(--dim)';
+  const arrows = {rising:'\u2191', falling:'\u2193', flat:'\u2192'};
+  document.getElementById('price-sub').textContent = pr.tier + ' ' + (arrows[pr.trend]||'');
+  let det = '';
+  if (pr.price_hour != null) det += 'Hr: ' + pr.price_hour.toFixed(1) + '\u00a2';
+  if (pr.running_hour_avg != null) det += (det?' | ':'') + 'Run: ' + pr.running_hour_avg.toFixed(1) + '\u00a2';
+  document.getElementById('price-detail').textContent = det;
+
+  // Price sparkline
+  const spark = document.getElementById('price-sparkline');
+  spark.innerHTML = '';
+  if (pr.history_5min && pr.history_5min.length) {
+    const prices = pr.history_5min.map(e => e[1]).reverse();
+    const mx = Math.max(...prices, 1), mn = Math.min(...prices, 0);
+    const rng = mx - mn || 1;
+    prices.forEach(v => {
+      const bar = document.createElement('span');
+      const h = Math.max(2, ((v - mn) / rng) * 22);
+      bar.style.height = h + 'px';
+      bar.style.background = pr.tier_color || 'var(--dim)';
+      spark.appendChild(bar);
+    });
+  }
+
+  // ─── Battery pill ──────────────────────────────────────────────────
+  const soc = p.soc_pct;
+  document.getElementById('batt-hero').textContent = soc != null ? Math.round(soc) + '%' : '--%';
+  if (soc != null) {
+    if (soc < 20) document.getElementById('batt-hero').style.color = 'var(--red)';
+    else if (soc < 50) document.getElementById('batt-hero').style.color = 'var(--amber)';
+    else document.getElementById('batt-hero').style.color = 'var(--green)';
+  }
+  const bw = p.battery_w;
+  if (bw != null && bw > 50) {
+    document.getElementById('batt-sub').textContent = 'Charging +' + fmt(bw);
+    document.getElementById('batt-sub').style.color = 'var(--charge-green)';
+  } else if (bw != null && bw < -50) {
+    document.getElementById('batt-sub').textContent = 'Discharging ' + fmt(bw);
+    document.getElementById('batt-sub').style.color = 'var(--discharge-amber)';
+  } else {
+    document.getElementById('batt-sub').textContent = 'Idle';
+    document.getElementById('batt-sub').style.color = 'var(--dim)';
+  }
+  // Band label
+  let bandName = 'Unknown';
+  if (soc != null) {
+    if (soc >= t.max_soc) bandName = 'Full';
+    else if (soc >= t.high_floor) bandName = 'High band';
+    else if (soc >= t.mid_floor) bandName = 'Mid band';
+    else if (soc >= t.low_floor) bandName = 'Low band';
+    else bandName = 'Emergency';
+  }
+  document.getElementById('batt-detail').textContent = 'Delta Pro Ultra \u00b7 ' + bandName;
+  // SOC bar
+  if (soc != null) {
+    const fill = document.getElementById('soc-fill');
+    fill.style.width = soc + '%';
+    fill.style.background = soc < 20 ? 'var(--red)' : soc < 50 ? 'var(--amber)' : 'var(--green)';
+    document.getElementById('soc-marker').style.left = 'calc(' + soc + '% - 1.5px)';
+  }
+
+  // ─── Power pill ────────────────────────────────────────────────────
+  document.getElementById('power-hero').textContent = p.load_w != null ? fmt(p.load_w) : '-- W';
+  document.getElementById('power-sub').textContent = 'Grid: ' + (p.grid_w != null ? fmt(p.grid_w) : '--');
+  document.getElementById('power-detail').textContent = (p.mode_label || '\u2014') + ' \u00b7 L1/L2: ' +
+    (p.volt_a != null ? p.volt_a.toFixed(1) : '--') + '/' + (p.volt_b != null ? p.volt_b.toFixed(1) : '--') + 'V';
+
+  // ─── Flow diagram ─────────────────────────────────────────────────
+  updateFlow(p);
+
+  // ─── Automation strip ──────────────────────────────────────────────
+  const adot = document.getElementById('auto-dot');
+  const atxt = document.getElementById('auto-text');
+  if (au.enabled) {
+    adot.className = 'auto-dot on';
+    atxt.textContent = 'Auto \u00b7 ' + au.last_decision;
+  } else {
+    adot.className = 'auto-dot off';
+    atxt.textContent = 'Automation disabled \u2014 manual control';
+  }
+
+  // ─── Mode buttons ─────────────────────────────────────────────────
+  document.getElementById('btn-backup').className = 'mode-btn' + (p.op_mode === 1 ? ' active' : '');
+  document.getElementById('btn-selfpwr').className = 'mode-btn' + (p.op_mode === 2 ? ' active' : '');
+
+  // ─── Override status ──────────────────────────────────────────────
+  const overrideRow = document.getElementById('override-row');
+  const overrideStatus = document.getElementById('override-status');
+  const cancelBtn = document.getElementById('btn-cancel-override');
+  if (au.override_remaining > 0) {
+    overrideRow.style.display = 'flex';
+    const mins = Math.floor(au.override_remaining / 60);
+    const secs = au.override_remaining % 60;
+    overrideStatus.textContent = 'Manual override active — ' + mins + 'm ' + secs + 's remaining';
+    overrideStatus.style.color = 'var(--amber)';
+    cancelBtn.style.display = '';
+  } else {
+    overrideRow.style.display = 'flex';
+    overrideStatus.textContent = '';
+    cancelBtn.style.display = 'none';
+  }
+
+  // ─── Auto toggle ──────────────────────────────────────────────────
+  document.getElementById('btn-auto-on').className = au.enabled ? 'active' : '';
+  document.getElementById('btn-auto-off').className = au.enabled ? '' : 'active';
+
+  // ─── Thresholds ───────────────────────────────────────────────────
+  updateThresholds(t, soc);
+
+  // ─── Readings ─────────────────────────────────────────────────────
+  const readingsHTML = buildReadings(p, pr);
+  const rd = document.getElementById('readings-desktop');
+  const rm = document.getElementById('readings-mobile');
+  if (rd) rd.innerHTML = readingsHTML;
+  if (rm) rm.innerHTML = readingsHTML;
+
+  // ─── Command log ──────────────────────────────────────────────────
+  const logEl = document.getElementById('command-log');
+  if (state.command_log) {
+    logEl.innerHTML = state.command_log.map(e =>
+      '<div class="log-entry ' + (e.live ? 'log-live' : 'log-dry') + '">' +
+      e.ts + ' [' + (e.live ? 'LIVE' : 'DRY') + '] ' + escHtml(e.text) + '</div>'
+    ).reverse().join('');
+  }
+
+  // ─── History chart ─────────────────────────────────────────────────
+  drawHistory();
+}
+
+// ═══ Helpers ═════════════════════════════════════════════════════════════
+function fmt(w) {
+  if (w == null) return '--';
+  const abs = Math.abs(w);
+  if (abs >= 1000) return (w/1000).toFixed(1) + ' kW';
+  return Math.round(w).toLocaleString() + ' W';
+}
+
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function buildReadings(p, pr) {
+  const rows = [
+    ['Grid draw', p.grid_w != null ? fmt(p.grid_w) : '\u2014', ''],
+    ['Home load', p.load_w != null ? fmt(p.load_w) : '\u2014', ''],
+    ['Battery', p.battery_w != null ? (p.battery_w > 0 ? '+' : '') + fmt(p.battery_w) : '\u2014',
+      p.battery_w > 50 ? 'color:var(--charge-green)' : p.battery_w < -50 ? 'color:var(--discharge-amber)' : ''],
+    ['SOC', p.soc_pct != null ? Math.round(p.soc_pct) + '%' : '\u2014',
+      p.soc_pct < 20 ? 'color:var(--red)' : p.soc_pct < 50 ? 'color:var(--amber)' : 'color:var(--green)'],
+    ['L1 / L2', (p.volt_a != null ? p.volt_a.toFixed(1) : '--') + ' / ' + (p.volt_b != null ? p.volt_b.toFixed(1) : '--') + 'V', ''],
+    ['Hour avg', pr.price_hour != null ? pr.price_hour.toFixed(1) + '\u00a2' : '\u2014', ''],
+    ['Solar', '\u2014', 'color:var(--dim)'],
+  ];
+  return rows.map(([l,v,s]) =>
+    '<div class="reading-row"><span class="lbl">' + l + '</span><span class="val"' + (s ? ' style="'+s+'"' : '') + '>' + v + '</span></div>'
+  ).join('');
+}
+
+// ═══ Flow Diagram Update ═════════════════════════════════════════════════
+function updateFlow(p) {
+  const gridLine = document.getElementById('line-grid-house');
+  const homeLine = document.getElementById('line-house-home');
+  const battLine = document.getElementById('line-batt-house');
+  const battRect = document.getElementById('batt-rect');
+  const battNodeLabel = document.getElementById('batt-node-label');
+  const battFillBar = document.getElementById('batt-fill-bar');
+
+  // Grid → House
+  if (p.grid_w != null && p.grid_w > 50) {
+    gridLine.className.baseVal = 'flow-line active';
+    gridLine.style.stroke = 'var(--blue)';
+    gridLine.style.animation = 'flowRight 0.8s linear infinite';
+    document.getElementById('watts-grid').textContent = fmt(p.grid_w);
+    document.getElementById('watts-grid').style.fill = 'var(--blue)';
+    document.getElementById('grid-label').textContent = 'Import';
+    document.getElementById('grid-watts').textContent = fmt(p.grid_w);
+  } else {
+    gridLine.className.baseVal = 'flow-line idle';
+    gridLine.style.animation = '';
+    document.getElementById('watts-grid').textContent = '';
+    document.getElementById('grid-label').textContent = 'Idle';
+    document.getElementById('grid-watts').textContent = '';
+  }
+
+  // House → Home (always active if load > 0)
+  if (p.load_w != null && p.load_w > 50) {
+    homeLine.className.baseVal = 'flow-line active';
+    homeLine.style.stroke = 'var(--teal)';
+    homeLine.style.animation = 'flowRight 0.8s linear infinite';
+    document.getElementById('watts-home').textContent = fmt(p.load_w);
+    document.getElementById('watts-home').style.fill = 'var(--teal)';
+    document.getElementById('home-label').textContent = fmt(p.load_w);
+    document.getElementById('home-watts').textContent = fmt(p.load_w);
+  } else {
+    homeLine.className.baseVal = 'flow-line idle';
+    homeLine.style.animation = '';
+    document.getElementById('watts-home').textContent = '';
+    document.getElementById('home-label').textContent = 'Idle';
+    document.getElementById('home-watts').textContent = '';
+  }
+
+  // Battery ↔ House
+  // Path goes from battery (bottom-left) UP to house — so:
+  //   flowDown (offset 20→0) = dashes move along path = battery→house = DISCHARGE direction
+  //   flowUp (offset 0→20) = dashes move against path = house→battery = CHARGE direction
+  if (p.battery_w != null && p.battery_w > 50) {
+    // Charging: energy flows from house INTO battery (against path direction)
+    battLine.className.baseVal = 'flow-line active';
+    battLine.style.stroke = 'var(--charge-green)';
+    battLine.style.animation = 'flowUp 0.8s linear infinite';
+    document.getElementById('watts-batt').textContent = '+' + fmt(p.battery_w);
+    document.getElementById('watts-batt').style.fill = 'var(--charge-green)';
+    document.getElementById('batt-label').textContent = 'Charging';
+    battRect.setAttribute('stroke', 'var(--charge-green)');
+    battNodeLabel.style.fill = 'var(--charge-green)';
+  } else if (p.battery_w != null && p.battery_w < -50) {
+    // Discharging: energy flows FROM battery to house (along path direction)
+    battLine.className.baseVal = 'flow-line active';
+    battLine.style.stroke = 'var(--discharge-amber)';
+    battLine.style.animation = 'flowDown 0.8s linear infinite';
+    document.getElementById('watts-batt').textContent = fmt(Math.abs(p.battery_w));
+    document.getElementById('watts-batt').style.fill = 'var(--discharge-amber)';
+    document.getElementById('batt-label').textContent = 'Discharging';
+    battRect.setAttribute('stroke', 'var(--discharge-amber)');
+    battNodeLabel.style.fill = 'var(--discharge-amber)';
+  } else {
+    battLine.className.baseVal = 'flow-line idle';
+    battLine.style.animation = '';
+    document.getElementById('watts-batt').textContent = '';
+    document.getElementById('batt-label').textContent = 'Idle';
+    battRect.setAttribute('stroke', 'var(--charge-green)');
+    battNodeLabel.style.fill = 'var(--charge-green)';
+  }
+
+  // Battery SOC fill bar inside node
+  if (p.soc_pct != null) {
+    const fillW = Math.max(0, Math.min(102, (p.soc_pct / 100) * 102));
+    battFillBar.setAttribute('width', fillW);
+    battFillBar.style.fill = p.soc_pct < 20 ? 'var(--red)' : p.soc_pct < 50 ? 'var(--amber)' : 'var(--charge-green)';
+  }
+
+  // House mode label
+  const hm = document.getElementById('house-mode');
+  if (hm) hm.textContent = p.mode_label || '\u2014';
+}
+
+// ═══ Threshold Display ═══════════════════════════════════════════════════
+function updateThresholds(t, soc) {
+  // Band ranges
+  document.getElementById('band-high-range').textContent = t.high_floor + '\u2192' + t.max_soc + '%';
+  document.getElementById('band-mid-range').textContent = t.mid_floor + '\u2192' + t.high_floor + '%';
+  document.getElementById('band-low-range').textContent = t.low_floor + '\u2192' + t.mid_floor + '%';
+  document.getElementById('band-emg-range').textContent = '0\u2192' + t.low_floor + '%';
+
+  // Band summaries
+  document.getElementById('band-high-sum').textContent = '<' + t.high_charge_below.toFixed(1) + 'c \u00b7 ' + t.high_rate + 'W';
+  document.getElementById('band-mid-sum').textContent = '<' + t.mid_charge_below.toFixed(1) + 'c \u00b7 ' + t.mid_rate + 'W';
+  document.getElementById('band-low-sum').textContent = '<' + t.low_charge_below.toFixed(1) + 'c \u00b7 ' + t.low_rate + 'W';
+  document.getElementById('band-emg-sum').textContent = '<' + t.emergency_charge_below.toFixed(1) + 'c \u00b7 ' + t.rate_emergency + 'W';
+
+  // Adjuster values
+  const setAdj = (id, val, unit) => { const el = document.getElementById('adj-' + id); if(el) el.textContent = val + unit; };
+  setAdj('max_soc', t.max_soc, '%');
+  setAdj('high_charge_below', t.high_charge_below.toFixed(1), 'c');
+  setAdj('high_rate', t.high_rate, 'W');
+  setAdj('high_floor', t.high_floor, '%');
+  setAdj('mid_charge_below', t.mid_charge_below.toFixed(1), 'c');
+  setAdj('mid_rate', t.mid_rate, 'W');
+  setAdj('mid_floor', t.mid_floor, '%');
+  setAdj('low_charge_below', t.low_charge_below.toFixed(1), 'c');
+  setAdj('low_rate', t.low_rate, 'W');
+  setAdj('low_floor', t.low_floor, '%');
+  setAdj('emergency_charge_below', t.emergency_charge_below.toFixed(1), 'c');
+  setAdj('rate_emergency', t.rate_emergency, 'W');
+  setAdj('discharge_above', t.discharge_above.toFixed(1), 'c');
+
+  // Active band marker — add to whichever band SOC is in
+  document.querySelectorAll('.band-active-marker').forEach(m => m.remove());
+  if (soc != null) {
+    let bandId;
+    if (soc >= t.max_soc) bandId = 'high';
+    else if (soc >= t.high_floor) bandId = 'high';
+    else if (soc >= t.mid_floor) bandId = 'mid';
+    else if (soc >= t.low_floor) bandId = 'low';
+    else bandId = 'emg';
+    const header = document.querySelector('#band-' + bandId + ' .band-header');
+    if (header) {
+      const marker = document.createElement('span');
+      marker.className = 'band-active-marker';
+      marker.textContent = Math.round(soc) + '%';
+      header.appendChild(marker);
+    }
+  }
+}
+
+// ═══ History Chart ═══════════════════════════════════════════════════════
+function drawHistory() {
+  if (!state || !state.history) return;
+  const canvas = document.getElementById('history-canvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+
+  ctx.clearRect(0, 0, W, H);
+
+  const h = state.history;
+  if (!h.times || h.times.length < 2) {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Waiting for data...', W/2, H/2);
+    return;
+  }
+
+  const n = h.times.length;
+  const allVals = [...h.grid, ...h.load, ...h.battery];
+  let yMin = Math.min(0, ...allVals);
+  let yMax = Math.max(100, ...allVals);
+  const pad = (yMax - yMin) * 0.1 || 50;
+  yMin -= pad; yMax += pad;
+
+  const xScale = (i) => (i / (n - 1)) * (W - 40) + 30;
+  const yScale = (v) => H - 20 - ((v - yMin) / (yMax - yMin)) * (H - 30);
+
+  // Zero line
+  if (yMin < 0 && yMax > 0) {
+    ctx.strokeStyle = '#30363d';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(30, yScale(0));
+    ctx.lineTo(W, yScale(0));
+    ctx.stroke();
+  }
+
+  // Draw series
+  const series = [
+    {data: h.grid, color: '#58a6ff', label: 'Grid'},
+    {data: h.load, color: '#1d9e75', label: 'Home'},
+    {data: h.battery, color: '#639922', label: 'Battery'},
+  ];
+  series.forEach(s => {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = xScale(i), y = yScale(s.data[i] || 0);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  });
+
+  // Y-axis labels
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right';
+  for (let v = Math.ceil(yMin/500)*500; v <= yMax; v += 500) {
+    if (v < yMin) continue;
+    const y = yScale(v);
+    ctx.fillText(v >= 1000 ? (v/1000).toFixed(1)+'k' : v+'', 26, y + 3);
+  }
+
+  // Legend
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'left';
+  let lx = 34;
+  series.forEach(s => {
+    ctx.fillStyle = s.color;
+    ctx.fillRect(lx, 4, 10, 3);
+    ctx.fillText(s.label, lx + 13, 10);
+    lx += ctx.measureText(s.label).width + 24;
+  });
+}
+
+// ═══ House image check ═══════════════════════════════════════════════════
+(function checkHouseImage() {
+})();
+
+// ═══ Clock + Init ════════════════════════════════════════════════════════
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+}, 10000);
+
+connect();
+</script>
+</body>
+</html>
