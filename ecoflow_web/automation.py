@@ -111,6 +111,13 @@ class AutoController:
         """
         soc = pw.soc_pct
 
+        # Grid outage detection: battery discharging in Backup mode with grid ~0W.
+        # Don't try to charge or switch modes during an actual outage.
+        if (pw.op_mode == 1
+                and pw.battery_w is not None and pw.battery_w < -50
+                and (pw.grid_w is None or pw.grid_w < 20)):
+            return None, None, "OUTAGE: grid down, battery powering home \u2014 skipping automation"
+
         # Effective price = ComEd hourly average (BESH billing rate).
         # Trend / running avg are display-only — not used for decisions.
         if ps.effective_price is not None:

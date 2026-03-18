@@ -445,9 +445,11 @@ class ComedPoller:
     """Polls ComEd APIs in a background thread every COMED_POLL_SECONDS."""
 
     def __init__(self, price_state: PriceState, on_update):
-        self.ps         = price_state
-        self.on_update  = on_update
-        self._stop      = threading.Event()
+        self.ps              = price_state
+        self.on_update       = on_update
+        self._stop           = threading.Event()
+        self._prev_hour_avg  = None   # last confirmed hourly avg (for stale detection)
+        self._current_hour   = -1     # hour number when _prev_hour_avg was set
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
@@ -494,9 +496,38 @@ class ComedPoller:
                 self.ps.running_hour_avg = hour_avg
 
             # Effective price = ComEd hourly average (what BESH actually bills on).
-            # Running hour avg and 5-min trend are display-only indicators.
+            # At hour boundaries (minutes 0-9), the hourly API may still report
+            # last hour's stale average.  Detect and use 5-min avg instead.
+            now_dt = datetime.datetime.now()
+            current_hour = now_dt.hour
+
+            # On hour change, snapshot the old hourly avg for stale detection
+            if self._current_hour != current_hour:
+                if self.ps.price_hour is not None:
+                    self._prev_hour_avg = self.ps.price_hour
+                self._current_hour = current_hour
+
             if hour_avg is not None:
-                self.ps.effective_price = hour_avg
+                minute = now_dt.minute
+                # In first 10 min of the hour, check if hourly avg is stale
+                if (minute < 10
+                        and self._prev_hour_avg is not None
+                        and abs(hour_avg - self._prev_hour_avg) < 0.01):
+                    # Hourly avg unchanged — still reporting last hour's price.
+                    # Bridge with average of last 2 five-minute prices.
+                    last2 = [p for _, p in entries[:2]]
+                    if len(last2) >= 2:
+                        self.ps.effective_price = sum(last2) / len(last2)
+                        log.info("Hour-start bridge: using avg of last 2 5min prices (%.1f¢)",
+                                 self.ps.effective_price)
+                    else:
+                        self.ps.effective_price = current
+                else:
+                    # Hourly avg is fresh — use it
+                    self.ps.effective_price = hour_avg
+                    if minute >= 10:
+                        # Past the stale window — safe to update prev for next hour
+                        self._prev_hour_avg = hour_avg
             else:
                 # Fallback: no hourly avg yet (rare) — use latest 5-min price
                 self.ps.effective_price = current
@@ -596,6 +627,13 @@ class AutoController:
           Above max_soc:                      stop charging
         """
         soc = pw.soc_pct
+
+        # Grid outage detection: battery discharging in Backup mode with grid ~0W.
+        # Don't try to charge or switch modes during an actual outage.
+        if (pw.op_mode == 1
+                and pw.battery_w is not None and pw.battery_w < -50
+                and (pw.grid_w is None or pw.grid_w < 20)):
+            return None, None, "OUTAGE: grid down, battery powering home \u2014 skipping automation"
 
         # Effective price = ComEd hourly average (BESH billing rate).
         # Trend / running avg are display-only — not used for decisions.

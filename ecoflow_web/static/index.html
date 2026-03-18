@@ -56,6 +56,19 @@ button:active{transform:scale(0.97)}
 .flow-label{fill:var(--text);font-size:11px;text-anchor:middle;font-family:inherit}
 .flow-watts{font-size:10px;text-anchor:middle;font-family:inherit;font-weight:600}
 
+/* ─── Flow + Chart Row ────────────────────────────────────────────────── */
+.flow-chart-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 12px}
+.price-chart-container{display:flex;flex-direction:column}
+.price-bar-chart{position:relative;padding-left:36px;padding-bottom:4px;flex:1;display:flex;flex-direction:column;justify-content:flex-end}
+.chart-area{display:flex;align-items:flex-end;gap:3px;height:140px}
+.chart-area .bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;min-width:0}
+.chart-area .bar{width:100%;max-width:40px;border-radius:3px 3px 0 0;transition:height 0.3s;position:relative;min-height:2px}
+.chart-area .bar-val{position:absolute;top:-15px;left:50%;transform:translateX(-50%);font-size:0.6rem;color:var(--dim);white-space:nowrap}
+.chart-x-axis{display:flex;gap:3px;margin-top:4px}
+.chart-x-axis span{flex:1;text-align:center;font-size:0.6rem;color:var(--dim)}
+.chart-y-axis{position:absolute;left:0;top:0;height:140px;display:flex;flex-direction:column;justify-content:space-between;font-size:0.6rem;color:var(--dim);width:32px;text-align:right}
+.chart-empty{display:flex;align-items:center;justify-content:center;height:140px;color:var(--dim);font-size:0.8rem}
+
 /* ─── Automation Strip ─────────────────────────────────────────────────── */
 .auto-strip{margin:0 12px;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.82rem;display:flex;align-items:center;gap:8px}
 .auto-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
@@ -131,6 +144,9 @@ button:active{transform:scale(0.97)}
   .pill .hero{font-size:1.3rem}
   .pill .subtitle{font-size:0.72rem}
   .two-col{grid-template-columns:1fr;padding:8px}
+  .flow-chart-row{grid-template-columns:1fr;padding:4px 8px}
+  .flow-chart-row .flow-container{order:1}
+  .flow-chart-row .price-chart-container{order:2}
   .flow-container{padding:4px 8px}
   .adj-btn{width:44px;height:44px;font-size:1.2rem}
   .mode-btn,.charge-btns button,.auto-toggle button{padding:14px;font-size:0.9rem}
@@ -184,7 +200,17 @@ button:active{transform:scale(0.97)}
   </div>
 </div>
 
-<!-- Power Flow Diagram -->
+<!-- Price Bar Chart + Power Flow Diagram -->
+<div class="flow-chart-row">
+<div class="section-card price-chart-container">
+  <div class="section-title">Current Hour Prices (5-min)</div>
+  <div class="price-bar-chart" id="price-bar-chart">
+    <div class="chart-y-axis" id="chart-y-axis"></div>
+    <div class="chart-empty" id="chart-empty">Waiting for data...</div>
+    <div class="chart-area" id="chart-bars" style="display:none"></div>
+    <div class="chart-x-axis" id="chart-x-axis" style="display:none"></div>
+  </div>
+</div>
 <div class="flow-container">
   <svg class="flow-svg" viewBox="0 0 700 320" id="flow-svg">
     <defs>
@@ -239,6 +265,7 @@ button:active{transform:scale(0.97)}
     </g>
   </svg>
 </div>
+</div> <!-- /flow-chart-row -->
 
 <!-- Automation Strip -->
 <div class="auto-strip">
@@ -458,6 +485,85 @@ function updateSliderLabel() {
   document.getElementById('soc-val').textContent = s + '%';
 }
 
+// ═══ 5-Min Price Bar Chart ════════════════════════════════════════════════
+function barColor(cents) {
+  if (cents < 8) return '#3fb950';       // green
+  if (cents <= 14) return '#f0a500';     // amber
+  return '#f85149';                       // red
+}
+
+function renderPriceBarChart(pr) {
+  const barsEl = document.getElementById('chart-bars');
+  const xAxis  = document.getElementById('chart-x-axis');
+  const yAxis  = document.getElementById('chart-y-axis');
+  const empty  = document.getElementById('chart-empty');
+  if (!pr.history_5min || !pr.history_5min.length) {
+    barsEl.style.display = 'none';
+    xAxis.style.display  = 'none';
+    empty.style.display  = 'flex';
+    return;
+  }
+
+  // Filter to current hour only, reverse to chronological
+  const now = new Date();
+  const hourStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours()).getTime() / 1000;
+  const currentHour = pr.history_5min.filter(e => e[0] >= hourStart).reverse();
+
+  if (!currentHour.length) {
+    barsEl.style.display = 'none';
+    xAxis.style.display  = 'none';
+    empty.style.display  = 'flex';
+    empty.textContent    = 'Waiting for first 5-min price...';
+    return;
+  }
+
+  empty.style.display  = 'none';
+  barsEl.style.display = 'flex';
+  xAxis.style.display  = 'flex';
+
+  const prices = currentHour.map(e => e[1]);
+  const maxP = Math.max(...prices, 14);   // at least 14 for scale
+  const minP = Math.min(0, ...prices);    // allow negative
+  const range = maxP - minP || 1;
+
+  // Y-axis labels
+  yAxis.innerHTML = '';
+  const ticks = [maxP, (maxP + minP) / 2, minP];
+  ticks.forEach(v => {
+    const lbl = document.createElement('span');
+    lbl.textContent = v.toFixed(0) + '\u00a2';
+    yAxis.appendChild(lbl);
+  });
+
+  // Bars
+  barsEl.innerHTML = '';
+  xAxis.innerHTML  = '';
+  currentHour.forEach(([ts, price]) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'bar-wrap';
+
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    const pct = Math.max(1, ((price - minP) / range) * 100);
+    bar.style.height = pct + '%';
+    bar.style.background = barColor(price);
+
+    const val = document.createElement('span');
+    val.className = 'bar-val';
+    val.textContent = price.toFixed(1);
+    bar.appendChild(val);
+
+    wrap.appendChild(bar);
+    barsEl.appendChild(wrap);
+
+    // X-axis time label
+    const t = new Date(ts * 1000);
+    const lbl = document.createElement('span');
+    lbl.textContent = ':' + String(t.getMinutes()).padStart(2, '0');
+    xAxis.appendChild(lbl);
+  });
+}
+
 // ═══ Render ══════════════════════════════════════════════════════════════
 function render() {
   if (!state) return;
@@ -502,6 +608,9 @@ function render() {
       spark.appendChild(bar);
     });
   }
+
+  // ─── 5-min Price Bar Chart ─────────────────────────────────────────
+  renderPriceBarChart(pr);
 
   // ─── Battery pill ──────────────────────────────────────────────────
   const soc = p.soc_pct;
@@ -552,11 +661,20 @@ function render() {
   // ─── Automation strip ──────────────────────────────────────────────
   const adot = document.getElementById('auto-dot');
   const atxt = document.getElementById('auto-text');
-  if (au.enabled) {
+  if (au.enabled && au.last_decision.startsWith('OUTAGE:')) {
     adot.className = 'auto-dot on';
+    adot.style.background = 'var(--red)';
+    atxt.textContent = 'Auto \u00b7 ' + au.last_decision;
+    atxt.style.color = 'var(--red)';
+  } else if (au.enabled) {
+    adot.className = 'auto-dot on';
+    adot.style.background = '';
+    atxt.style.color = '';
     atxt.textContent = 'Auto \u00b7 ' + au.last_decision;
   } else {
     adot.className = 'auto-dot off';
+    adot.style.background = '';
+    atxt.style.color = '';
     atxt.textContent = 'Automation disabled \u2014 manual control';
   }
 
