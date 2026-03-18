@@ -60,12 +60,12 @@ button:active{transform:scale(0.97)}
 .flow-chart-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 12px}
 .price-chart-container{display:flex;flex-direction:column}
 .price-bar-chart{position:relative;padding-left:36px;padding-bottom:4px;flex:1;display:flex;flex-direction:column;justify-content:flex-end}
-.chart-area{display:flex;align-items:flex-end;gap:3px;height:140px}
-.chart-area .bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;min-width:0}
-.chart-area .bar{width:100%;max-width:40px;border-radius:3px 3px 0 0;transition:height 0.3s;position:relative;min-height:2px}
+.chart-area{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;height:140px;align-items:end}
+.chart-area .bar-wrap{display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end}
+.chart-area .bar{width:100%;border-radius:3px 3px 0 0;transition:height 0.3s;position:relative;min-height:2px}
 .chart-area .bar-val{position:absolute;top:-15px;left:50%;transform:translateX(-50%);font-size:0.6rem;color:var(--dim);white-space:nowrap}
-.chart-x-axis{display:flex;gap:3px;margin-top:4px}
-.chart-x-axis span{flex:1;text-align:center;font-size:0.6rem;color:var(--dim)}
+.chart-x-axis{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin-top:4px}
+.chart-x-axis span{text-align:center;font-size:0.6rem;color:var(--dim)}
 .chart-y-axis{position:absolute;left:0;top:0;height:140px;display:flex;flex-direction:column;justify-content:space-between;font-size:0.6rem;color:var(--dim);width:32px;text-align:right}
 .chart-empty{display:flex;align-items:center;justify-content:center;height:140px;color:var(--dim);font-size:0.8rem}
 
@@ -518,8 +518,8 @@ function renderPriceBarChart(pr) {
   }
 
   empty.style.display  = 'none';
-  barsEl.style.display = 'flex';
-  xAxis.style.display  = 'flex';
+  barsEl.style.display = 'grid';
+  xAxis.style.display  = 'grid';
 
   const prices = currentHour.map(e => e[1]);
   const maxP = Math.max(...prices, 14);   // at least 14 for scale
@@ -535,33 +535,46 @@ function renderPriceBarChart(pr) {
     yAxis.appendChild(lbl);
   });
 
-  // Bars
+  // Build lookup: minute → price for current hour data
+  const dataBySlot = {};
+  currentHour.forEach(([ts, price]) => {
+    const m = new Date(ts * 1000).getMinutes();
+    const slot = Math.floor(m / 5);  // 0-11
+    dataBySlot[slot] = price;
+  });
+
+  // Always render 12 slots (:00 through :55)
   barsEl.innerHTML = '';
   xAxis.innerHTML  = '';
-  currentHour.forEach(([ts, price]) => {
+  const hourDt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours());
+  for (let slot = 0; slot < 12; slot++) {
     const wrap = document.createElement('div');
     wrap.className = 'bar-wrap';
 
-    const bar = document.createElement('div');
-    bar.className = 'bar';
-    const pct = Math.max(1, ((price - minP) / range) * 100);
-    bar.style.height = pct + '%';
-    bar.style.background = barColor(price);
+    if (dataBySlot[slot] !== undefined) {
+      const price = dataBySlot[slot];
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      const pct = Math.max(1, ((price - minP) / range) * 100);
+      bar.style.height = pct + '%';
+      bar.style.background = barColor(price);
 
-    const val = document.createElement('span');
-    val.className = 'bar-val';
-    val.textContent = price.toFixed(1);
-    bar.appendChild(val);
+      const val = document.createElement('span');
+      val.className = 'bar-val';
+      val.textContent = price.toFixed(1);
+      bar.appendChild(val);
+      wrap.appendChild(bar);
+    }
+    // Empty wrap for future slots (placeholder)
 
-    wrap.appendChild(bar);
     barsEl.appendChild(wrap);
 
     // X-axis time label
-    const t = new Date(ts * 1000);
     const lbl = document.createElement('span');
-    lbl.textContent = ':' + String(t.getMinutes()).padStart(2, '0');
+    lbl.textContent = ':' + String(slot * 5).padStart(2, '0');
+    lbl.style.opacity = dataBySlot[slot] !== undefined ? '1' : '0.3';
     xAxis.appendChild(lbl);
-  });
+  }
 }
 
 // ═══ Render ══════════════════════════════════════════════════════════════
