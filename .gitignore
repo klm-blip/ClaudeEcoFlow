@@ -1,5 +1,6 @@
-# Credentials - never commit these
+# Credentials and config with secrets - never commit
 ecoflow_credentials.txt
+ecoflow_thresholds.json
 
 # Reference repos (cloned external repos, not our code)
 references/
@@ -28,6 +29,7 @@ Gemini_Generated_Image_*
 nul
 
 # Logs
+logs/
 *.log
 *.log.*
 cmd_sweep_progress.json

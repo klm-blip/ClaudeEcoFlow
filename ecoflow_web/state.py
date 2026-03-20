@@ -66,6 +66,7 @@ class PriceState:
     tier:             str             = "\u2014"
     tier_color:       str             = "#8b949e"
     history_5min:     list            = field(default_factory=list)
+    price_5min_ts:    Optional[float] = None   # unix timestamp of latest 5-min price
     last_update:      float           = 0.0
     error:            str             = ""
 
@@ -84,6 +85,7 @@ class PriceState:
             "tier":             self.tier,
             "tier_color":       self.tier_color,
             "history_5min":     self.history_5min,
+            "price_5min_ts":    self.price_5min_ts,
             "error":            self.error,
         }
 

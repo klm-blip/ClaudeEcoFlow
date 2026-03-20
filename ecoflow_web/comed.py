@@ -76,13 +76,15 @@ class ComedPoller:
             if not entries:
                 return
 
-            current   = entries[0][1]
-            hour_avg  = float(raw_hour[0]["price"]) if raw_hour else None
+            current     = entries[0][1]
+            current_ts  = entries[0][0]   # unix timestamp of latest 5-min price
+            hour_avg    = float(raw_hour[0]["price"]) if raw_hour else None
             trend, sl = price_trend(entries)
             tier, col = classify_price(current)
 
-            self.ps.price_5min   = current
-            self.ps.price_hour   = hour_avg
+            self.ps.price_5min    = current
+            self.ps.price_5min_ts = current_ts
+            self.ps.price_hour    = hour_avg
             self.ps.trend        = trend
             self.ps.trend_slope  = sl
             self.ps.tier         = tier

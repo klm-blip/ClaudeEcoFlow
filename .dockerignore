@@ -1,0 +1,47 @@
+# Credentials (mounted as volumes at runtime)
+ecoflow_credentials.txt
+ecoflow_thresholds.json
+
+# Logs (mounted as volume)
+logs/
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Development/test scripts
+ecoflow_dashboard.py
+ecoflow_*_test.py
+ecoflow_charge_v*.py
+ecoflow_token_test.py
+ecoflow_developer_api_test.py
+ecoflow_mqtt_protobuf_test.py
+
+# APK analysis (large, not needed)
+apk_extracted/
+jadx/
+jadx_output*/
+references/
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Claude
+.claude/
+
+# Misc
+*.log
+cmd_sweep_progress.json

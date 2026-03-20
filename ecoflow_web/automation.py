@@ -43,6 +43,8 @@ class AutoThresholds:
     rate_emergency:     int   = 6000   # W - fast charge in emergency
     emergency_charge_below: float = 6.0  # cents - even emergency has a price cap
 
+    td_rate_cents:      float = 8.5    # cents/kWh - transmission & distribution charge
+
     def save(self):
         """Persist current thresholds to JSON file."""
         try:

@@ -1,0 +1,19 @@
+services:
+  ecoflow-dashboard:
+    build: .
+    container_name: ecoflow-dashboard
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - /home/pi/automation_data/ecoflow_credentials.txt:/app/ecoflow_credentials.txt:ro
+      - /home/pi/automation_data/ecoflow_thresholds.json:/app/ecoflow_thresholds.json
+      - /home/pi/automation_data/logs:/app/logs
+    networks:
+      - ecoflow-net
+
+networks:
+  ecoflow-net:
+    driver: bridge

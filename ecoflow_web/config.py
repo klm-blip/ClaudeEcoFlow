@@ -17,7 +17,7 @@ INVERTER_SN = "P101ZA1A9HA70164"
 # ─── Timing ─────────────────────────────────────────────────────────────────
 HISTORY_SECONDS    = 900   # 15 minutes of power history
 HISTORY_POINTS     = 180   # one sample every 5s
-COMED_POLL_SECONDS = 300   # ComEd publishes a new 5-min price every 5 minutes
+COMED_POLL_SECONDS = 60    # Poll every 60s to minimize delay (ComEd publishes every 5 min)
 
 # ─── ComEd ──────────────────────────────────────────────────────────────────
 COMED_FIXED_RATE   = 9.6   # cents/kWh (Price to Compare as of Jan 2026)
@@ -34,7 +34,7 @@ def _load_credentials():
     creds = {
         "MQTT_USER": "app-740f41d44de04eaf83832f8a801252e9",
         "MQTT_PASS": "c1e46f17f6994a1e8252f1e1f3135b68",
-        "CLIENT_ID": "ANDROID_574080605_1971363830522871810",
+        "CLIENT_ID": "ANDROID_892461037_1971363830522871810",
         "REST_JWT":  "",
     }
     if os.path.exists(CREDENTIALS_FILE):

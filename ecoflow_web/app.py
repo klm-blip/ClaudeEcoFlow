@@ -28,6 +28,8 @@ from .proto_codec import (
     build_mode_command, build_charge_command,
     build_charge_power_command, build_and_wrap,
 )
+from . import logger
+from .notify import TelegramNotifier
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("ecoflow")
@@ -43,6 +45,17 @@ auto.enabled = False    # start with auto OFF for testing; flip for production
 commands_live = False   # DRY RUN by default; flip for production
 command_log   = []      # [{ts, live, text}, ...] last 30 entries
 mqtt_handler  = None    # set in main()
+notifier      = TelegramNotifier()
+
+# Load Telegram config from thresholds file if present
+try:
+    import os as _os
+    from .config import THRESHOLDS_FILE as _TF
+    if _os.path.exists(_TF):
+        with open(_TF) as _f:
+            notifier.load_from_thresholds(json.load(_f))
+except Exception:
+    pass
 
 # WebSocket clients
 _ws_clients = set()
@@ -92,6 +105,7 @@ def _build_state_msg():
         "commands_live":  commands_live,
         "command_log":    command_log[-30:],
         "mqtt_connected": mqtt_handler.is_alive if mqtt_handler else False,
+        "telegram": notifier.to_dict(),
     })
 
 
@@ -120,6 +134,8 @@ def _log_command(text: str):
     if len(command_log) > 50:
         command_log = command_log[-30:]
     log.info("CMD [%s] %s", "LIVE" if commands_live else "DRY", text)
+    # CSV logging
+    logger.log_command(text, commands_live, power_state, price_state)
 
 
 def _handle_command(data: dict):
@@ -178,11 +194,49 @@ def _handle_command(data: dict):
         if key and val is not None and hasattr(thresholds, key):
             field_type = type(getattr(thresholds, key))
             setattr(thresholds, key, field_type(val))
+            # Link max_soc ↔ high band ceiling: they are the same concept
+            # (high band charges up to max_soc). Keep slider-soc in sync too.
+            if key == "max_soc":
+                pass  # max_soc IS the high band ceiling — nothing else to sync
             thresholds.save()
             _log_command(f"THRESHOLD {key} → {val}")
             # Trigger immediate automation re-evaluation
             if auto.enabled:
                 _run_automation()
+
+    elif cmd == "telegram_config":
+        token = data.get("bot_token", "")
+        chat_ids = data.get("chat_ids", [])
+        events = data.get("events", {})
+        notifier.configure(token, chat_ids, events)
+        # Save to thresholds file
+        td = thresholds.to_dict()
+        notifier.save_to_thresholds(td)
+        try:
+            from .config import THRESHOLDS_FILE
+            with open(THRESHOLDS_FILE, "w") as f:
+                json.dump(td, f, indent=2)
+        except Exception as e:
+            log.warning("Failed to save telegram config: %s", e)
+        _log_command("TELEGRAM config updated")
+
+    elif cmd == "telegram_test":
+        ok, msg = notifier.send_test()
+        _log_command(f"TELEGRAM test: {msg}")
+
+    elif cmd == "telegram_event_toggle":
+        event = data.get("event")
+        enabled = data.get("enabled", False)
+        if event and event in notifier.events:
+            notifier.events[event] = enabled
+            td = thresholds.to_dict()
+            notifier.save_to_thresholds(td)
+            try:
+                from .config import THRESHOLDS_FILE
+                with open(THRESHOLDS_FILE, "w") as f:
+                    json.dump(td, f, indent=2)
+            except Exception as e:
+                log.warning("Failed to save telegram events: %s", e)
 
     _broadcast()
 
@@ -234,11 +288,18 @@ def _run_automation():
     auto.last_decision = reason or auto.last_decision
 
     # Execute
+    prev_mode = auto.last_mode
     if mode == 2:
         # Self-Powered (discharge)
         p = build_and_wrap(build_mode_command(self_powered=True))
         mqtt_handler.publish_command(p, commands_live)
         _log_command(f"AUTO: {reason}")
+        # Notify: mode → Self-Powered
+        if prev_mode != 2 and commands_live:
+            ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
+            soc_str = f"{power_state.soc_pct:.0f}%" if power_state.soc_pct else "?"
+            notifier.notify("mode_self_powered",
+                f"⚡ <b>Self-Powered</b> — discharging battery\nPrice: {ep_str} | SOC: {soc_str}")
     elif mode == 1:
         # Backup mode
         p = build_and_wrap(build_mode_command(self_powered=False))
@@ -250,13 +311,29 @@ def _run_automation():
             p2 = build_and_wrap(build_charge_power_command(rate, int(thresholds.max_soc)))
             mqtt_handler.publish_command(p2, commands_live)
             _log_command(f"AUTO: {reason}")
+            # Notify: charge started
+            if commands_live:
+                ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
+                notifier.notify("charge_start",
+                    f"🔋 <b>Charging</b> at {rate}W\nPrice: {ep_str}")
         elif rate == 0:
             # Stop charging
             p1 = build_and_wrap(build_charge_command(False))
             mqtt_handler.publish_command(p1, commands_live)
             _log_command(f"AUTO: {reason}")
+            # Notify: back to backup
+            if prev_mode == 2 and commands_live:
+                ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
+                soc_str = f"{power_state.soc_pct:.0f}%" if power_state.soc_pct else "?"
+                notifier.notify("mode_backup",
+                    f"🔌 <b>Backup mode</b> — grid powering home\nPrice: {ep_str} | SOC: {soc_str}")
 
     auto.record(mode, rate, reason)
+
+    # Outage detection notification
+    if reason and "OUTAGE:" in reason and commands_live:
+        notifier.notify("grid_outage",
+            "🚨 <b>Grid Outage Detected</b>\nBattery is powering home. Grid appears down.")
 
 
 # ─── Callbacks ──────────────────────────────────────────────────────────────
@@ -270,6 +347,11 @@ def _on_telemetry_update():
 
 def _on_price_update():
     """Called from ComEd poller thread when new prices arrive."""
+    logger.log_price(price_state)
+    # Price spike notification
+    if price_state.effective_price is not None and price_state.effective_price >= 14.0:
+        notifier.notify("price_spike",
+            f"📈 <b>Price Spike!</b> {price_state.effective_price:.1f}¢/kWh")
     _broadcast()
     if auto.enabled:
         _run_automation()

@@ -185,6 +185,7 @@ button:active{transform:scale(0.97)}
     <div class="hero" id="price-hero">--</div>
     <div class="subtitle" id="price-sub">—</div>
     <div class="detail" id="price-detail"></div>
+    <div class="detail" id="price-total" style="color:var(--dim);font-size:0.7rem;margin-top:1px"></div>
     <div class="sparkline-bar" id="price-sparkline"></div>
   </div>
   <div class="pill" id="pill-battery">
@@ -349,6 +350,16 @@ button:active{transform:scale(0.97)}
         <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('discharge_above',0.5)">+</button>
       </span>
     </div>
+
+    <!-- T&D rate -->
+    <div class="discharge-row" style="margin-top:4px">
+      <span>T&amp;D rate</span>
+      <span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('td_rate_cents',-0.5)">−</button>
+        <span class="adj-value" id="adj-td_rate_cents" style="display:inline-block;min-width:50px">8.5c</span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('td_rate_cents',0.5)">+</button>
+      </span>
+    </div>
   </div>
 
   <!-- Right: Mode / Charge / Readings -->
@@ -388,6 +399,24 @@ button:active{transform:scale(0.97)}
 
     <div class="section-title desktop-only" style="margin-top:14px">Readings</div>
     <div id="readings-desktop" class="readings desktop-only"></div>
+  </div>
+</div>
+
+<!-- Alerts / Telegram -->
+<div class="section-card" style="margin:8px">
+  <div class="section-title">Telegram Alerts</div>
+  <div style="padding:6px 0">
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input type="text" id="tg-token" placeholder="Bot token" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem;font-family:var(--font-mono)">
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input type="text" id="tg-chatids" placeholder="Chat IDs (comma-separated)" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
+      <button onclick="saveTelegram()" style="background:var(--green);color:#000;padding:6px 12px;font-size:0.8rem">Save</button>
+      <button onclick="send({cmd:'telegram_test'})" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 12px;font-size:0.8rem">Test</button>
+    </div>
+    <div id="tg-status" style="font-size:0.75rem;color:var(--dim);margin-bottom:8px"></div>
+    <div class="section-title" style="font-size:0.8rem;margin-top:4px">Alert Events</div>
+    <div id="tg-events" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
   </div>
 </div>
 </div><!-- /tab-controls -->
@@ -453,7 +482,8 @@ function adjThreshold(key, delta) {
     discharge_above:[1,30], low_floor:[5,50], mid_floor:[20,80], high_floor:[40,95], max_soc:[70,100],
     low_charge_below:[-5,15], mid_charge_below:[-5,10], high_charge_below:[-5,5],
     emergency_charge_below:[-5,30],
-    low_rate:[600,12000], mid_rate:[600,12000], high_rate:[600,12000], rate_emergency:[600,12000]
+    low_rate:[600,12000], mid_rate:[600,12000], high_rate:[600,12000], rate_emergency:[600,12000],
+    td_rate_cents:[0,30]
   };
   if (clamps[key]) { val = Math.max(clamps[key][0], Math.min(clamps[key][1], val)); }
   // Round to avoid float drift
@@ -522,16 +552,23 @@ function renderPriceBarChart(pr) {
   xAxis.style.display  = 'grid';
 
   const prices = currentHour.map(e => e[1]);
-  const maxP = Math.max(...prices, 14);   // at least 14 for scale
-  const minP = Math.min(0, ...prices);    // allow negative
+  const rawMax = Math.max(...prices);
+  const maxP = Math.max(rawMax, 14);   // at least 14 for scale
+  const minP = Math.min(0, ...prices); // allow negative
   const range = maxP - minP || 1;
 
-  // Y-axis labels
+  // Y-axis labels — show smart ticks
   yAxis.innerHTML = '';
-  const ticks = [maxP, (maxP + minP) / 2, minP];
+  let ticks;
+  if (maxP > 50) {
+    // Extreme spike: show max, a mid-point, and 0
+    ticks = [maxP, Math.round(maxP / 2), minP];
+  } else {
+    ticks = [maxP, (maxP + minP) / 2, minP];
+  }
   ticks.forEach(v => {
     const lbl = document.createElement('span');
-    lbl.textContent = v.toFixed(0) + '\u00a2';
+    lbl.textContent = (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(0)) + '\u00a2';
     yAxis.appendChild(lbl);
   });
 
@@ -561,7 +598,7 @@ function renderPriceBarChart(pr) {
 
       const val = document.createElement('span');
       val.className = 'bar-val';
-      val.textContent = price.toFixed(1);
+      val.textContent = Math.abs(price) >= 100 ? Math.round(price).toString() : price.toFixed(1);
       bar.appendChild(val);
       wrap.appendChild(bar);
     }
@@ -605,6 +642,26 @@ function render() {
   if (pr.price_hour != null) det += 'Hr: ' + pr.price_hour.toFixed(1) + '\u00a2';
   if (pr.running_hour_avg != null) det += (det?' | ':'') + 'Run: ' + pr.running_hour_avg.toFixed(1) + '\u00a2';
   document.getElementById('price-detail').textContent = det;
+
+  // Total cost (supply + T&D)
+  const tdRate = t.td_rate_cents || 0;
+  const totalEl = document.getElementById('price-total');
+  if (ep != null && tdRate > 0) {
+    const total = ep + tdRate;
+    totalEl.textContent = 'Total: ' + total.toFixed(1) + '\u00a2/kWh (incl ' + tdRate.toFixed(1) + '\u00a2 T&D)';
+  } else {
+    totalEl.textContent = '';
+  }
+
+  // Price freshness
+  if (pr.price_5min_ts) {
+    const age = Math.round(Date.now()/1000 - pr.price_5min_ts);
+    const ageMins = Math.floor(age / 60);
+    const freshEl = document.getElementById('price-detail');
+    if (ageMins >= 2) {
+      freshEl.textContent += ' | ' + ageMins + 'm ago';
+    }
+  }
 
   // Price sparkline
   const spark = document.getElementById('price-sparkline');
@@ -735,6 +792,9 @@ function render() {
     ).reverse().join('');
   }
 
+  // ─── Telegram ────────────────────────────────────────────────────
+  renderTelegram(state.telegram);
+
   // ─── History chart ─────────────────────────────────────────────────
   drawHistory();
 }
@@ -759,6 +819,7 @@ function buildReadings(p, pr) {
       p.soc_pct < 20 ? 'color:var(--red)' : p.soc_pct < 50 ? 'color:var(--amber)' : 'color:var(--green)'],
     ['L1 / L2', (p.volt_a != null ? p.volt_a.toFixed(1) : '--') + ' / ' + (p.volt_b != null ? p.volt_b.toFixed(1) : '--') + 'V', ''],
     ['Hour avg', pr.price_hour != null ? pr.price_hour.toFixed(1) + '\u00a2' : '\u2014', ''],
+    ['Total cost', (pr.effective_price != null && state.thresholds.td_rate_cents > 0) ? (pr.effective_price + state.thresholds.td_rate_cents).toFixed(1) + '\u00a2' : '\u2014', ''],
     ['Solar', '\u2014', 'color:var(--dim)'],
   ];
   return rows.map(([l,v,s]) =>
@@ -883,6 +944,14 @@ function updateThresholds(t, soc) {
   setAdj('emergency_charge_below', t.emergency_charge_below.toFixed(1), 'c');
   setAdj('rate_emergency', t.rate_emergency, 'W');
   setAdj('discharge_above', t.discharge_above.toFixed(1), 'c');
+  setAdj('td_rate_cents', (t.td_rate_cents || 0).toFixed(1), 'c');
+
+  // Sync max SOC slider with threshold value
+  const sliderSoc = document.getElementById('slider-soc');
+  if (sliderSoc && t.max_soc != null) {
+    sliderSoc.value = t.max_soc;
+    document.getElementById('soc-val').textContent = t.max_soc + '%';
+  }
 
   // Active band marker — add to whichever band SOC is in
   document.querySelectorAll('.band-active-marker').forEach(m => m.remove());
@@ -988,6 +1057,73 @@ function drawHistory() {
 // ═══ House image check ═══════════════════════════════════════════════════
 (function checkHouseImage() {
 })();
+
+// Telegram config
+function saveTelegram() {
+  const token = document.getElementById('tg-token').value.trim();
+  const chatIdsStr = document.getElementById('tg-chatids').value.trim();
+  const chatIds = chatIdsStr.split(',').map(s => s.trim()).filter(s => s);
+  send({cmd: 'telegram_config', bot_token: token, chat_ids: chatIds});
+  document.getElementById('tg-status').textContent = 'Saved!';
+  document.getElementById('tg-status').style.color = 'var(--green)';
+  setTimeout(() => { document.getElementById('tg-status').textContent = ''; }, 3000);
+}
+
+function toggleTgEvent(event, enabled) {
+  send({cmd: 'telegram_event_toggle', event, enabled});
+}
+
+function renderTelegram(tg) {
+  if (!tg) return;
+  const tokenEl = document.getElementById('tg-token');
+  const chatEl = document.getElementById('tg-chatids');
+  // Only update if not focused (don't clobber user typing)
+  if (document.activeElement !== tokenEl && tg.bot_token) {
+    tokenEl.value = tg.bot_token;
+  }
+  if (document.activeElement !== chatEl && tg.chat_ids && tg.chat_ids.length) {
+    chatEl.value = tg.chat_ids.join(', ');
+  }
+  // Status
+  const statusEl = document.getElementById('tg-status');
+  if (tg.bot_token && tg.chat_ids && tg.chat_ids.length) {
+    statusEl.textContent = 'Configured — ' + tg.chat_ids.length + ' recipient(s)';
+    statusEl.style.color = 'var(--green)';
+  } else if (!statusEl.textContent.includes('Saved')) {
+    statusEl.textContent = 'Not configured';
+    statusEl.style.color = 'var(--dim)';
+  }
+  // Event toggles
+  const eventsEl = document.getElementById('tg-events');
+  const labels = {
+    mode_self_powered: 'Self-Powered',
+    mode_backup: 'Back to Backup',
+    charge_start: 'Charge Start',
+    charge_stop: 'Charge Stop',
+    grid_outage: 'Grid Outage',
+    price_spike: 'Price Spike',
+  };
+  eventsEl.innerHTML = '';
+  for (const [key, label] of Object.entries(labels)) {
+    const on = tg.events && tg.events[key];
+    const btn = document.createElement('button');
+    btn.textContent = (on ? '✓ ' : '') + label;
+    btn.style.cssText = 'padding:4px 10px;font-size:0.75rem;border-radius:12px;border:1px solid var(--border);' +
+      (on ? 'background:var(--green);color:#000;border-color:var(--green)' : 'background:var(--panel2);color:var(--dim)');
+    btn.onclick = () => toggleTgEvent(key, !on);
+    eventsEl.appendChild(btn);
+  }
+}
+
+// Visibility change — reconnect WS on app resume
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      console.log('Page visible, reconnecting WebSocket...');
+      connect();
+    }
+  }
+});
 
 // ═══ Clock + Init ════════════════════════════════════════════════════════
 setInterval(() => {
