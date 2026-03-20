@@ -40,9 +40,9 @@ price_state  = PriceState()
 history      = HistoryBuffer()
 thresholds   = AutoThresholds.load()
 auto         = AutoController()
-auto.enabled = False    # start with auto OFF for testing; flip for production
+auto.enabled = True     # automation ON by default (production)
 
-commands_live = False   # DRY RUN by default; flip for production
+commands_live = True    # LIVE commands by default (production)
 command_log   = []      # [{ts, live, text}, ...] last 30 entries
 mqtt_handler  = None    # set in main()
 notifier      = TelegramNotifier()
