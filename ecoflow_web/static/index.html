@@ -457,14 +457,14 @@ button:active{transform:scale(0.97)}
 <!-- EV Controls -->
 <div class="two-col" style="margin-top:4px">
   <div class="section-card">
-    <div class="section-title">Charge Control</div>
+    <div class="section-title">EV Charge Control</div>
     <div class="charge-btns" style="display:flex;gap:6px;margin-bottom:10px">
       <button onclick="send({cmd:'kia_charge_start'})" style="flex:1;background:var(--green);color:#000;font-weight:600">Start Charge</button>
       <button onclick="send({cmd:'kia_charge_stop'})" style="flex:1;background:var(--red);color:#fff;font-weight:600">Stop Charge</button>
     </div>
     <button onclick="send({cmd:'kia_refresh'})" style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);margin-bottom:10px">Refresh Status</button>
 
-    <div class="section-title" style="margin-top:8px">AC Charge Limit</div>
+    <div class="section-title" style="margin-top:8px">EV AC Charge Limit</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <button onclick="sendKiaLimit(80)" class="ev-limit-btn" style="padding:8px 14px;background:var(--panel2);border:1px solid var(--border);color:var(--text)">80%</button>
       <button onclick="sendKiaLimit(90)" class="ev-limit-btn" style="padding:8px 14px;background:var(--panel2);border:1px solid var(--border);color:var(--text)">90%</button>
@@ -485,7 +485,7 @@ button:active{transform:scale(0.97)}
       <button id="ev-btn-auto-off" onclick="send({cmd:'kia_toggle_auto'})" style="flex:1;padding:10px;font-weight:600">OFF</button>
     </div>
 
-    <div class="section-title">Thresholds</div>
+    <div class="section-title">EV Thresholds</div>
     <div style="font-size:0.82rem">
       <div class="adj-row" style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
         <span>Soak below</span>
