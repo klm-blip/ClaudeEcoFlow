@@ -229,14 +229,14 @@ button:active{transform:scale(0.97)}
     <path id="line-house-home" class="flow-line idle" d="M 420,160 C 460,160 500,160 570,160"/>
     <!-- Battery → House -->
     <path id="line-batt-house" class="flow-line idle" d="M 180,275 C 220,275 280,250 310,200"/>
-    <!-- Solar → House -->
-    <path id="line-solar-house" class="flow-line idle" d="M 350,60 L 350,120"/>
+    <!-- Solar → Grid -->
+    <path id="line-solar-house" class="flow-line idle" d="M 80,62 L 80,118"/>
 
     <!-- Wattage labels on lines -->
     <text id="watts-grid" class="flow-watts" x="205" y="150" fill="var(--dim)"></text>
     <text id="watts-home" class="flow-watts" x="495" y="150" fill="var(--dim)"></text>
     <text id="watts-batt" class="flow-watts" x="225" y="245" fill="var(--dim)"></text>
-    <text id="watts-solar" class="flow-watts" x="375" y="95" fill="var(--dim)"></text>
+    <text id="watts-solar" class="flow-watts" x="105" y="95" fill="var(--dim)"></text>
 
     <!-- Grid node -->
     <circle cx="80" cy="160" r="42" class="flow-node" stroke="var(--blue)"/>
@@ -263,11 +263,11 @@ button:active{transform:scale(0.97)}
     <text x="145" y="275" class="flow-label" style="font-size:10px;font-weight:600" id="batt-node-label" fill="var(--charge-green)">Battery</text>
     <text id="batt-label" x="145" y="289" class="flow-label" fill="var(--dim)" style="font-size:9px">—</text>
 
-    <!-- Solar node -->
+    <!-- Solar node (above Grid — grid-tied solar feeds into grid interconnect) -->
     <g id="solar-group">
-      <rect x="315" y="20" width="70" height="40" rx="4" class="flow-node" stroke="var(--discharge-amber)" id="solar-rect"/>
-      <text x="350" y="37" class="flow-label" fill="var(--discharge-amber)" style="font-size:10px;font-weight:600" id="solar-node-label">Solar</text>
-      <text id="solar-label" x="350" y="52" class="flow-label" fill="var(--dim)" style="font-size:9px">--</text>
+      <rect x="45" y="22" width="70" height="38" rx="4" class="flow-node" stroke="var(--discharge-amber)" id="solar-rect"/>
+      <text x="80" y="37" class="flow-label" fill="var(--discharge-amber)" style="font-size:10px;font-weight:600" id="solar-node-label">Solar</text>
+      <text id="solar-label" x="80" y="52" class="flow-label" fill="var(--dim)" style="font-size:9px">--</text>
     </g>
   </svg>
 </div>
