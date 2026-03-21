@@ -10,7 +10,10 @@ services:
     volumes:
       - /home/pi/automation_data/ecoflow_credentials.txt:/app/ecoflow_credentials.txt:ro
       - /home/pi/automation_data/ecoflow_thresholds.json:/app/ecoflow_thresholds.json
+      - /home/pi/automation_data/ecoflow_state.json:/app/ecoflow_state.json
       - /home/pi/automation_data/logs:/app/logs
+      - /home/pi/automation_data/kia_credentials.txt:/app/kia_credentials.txt:ro
+      - /home/pi/automation_data/kia_token.json:/app/kia_token.json
     networks:
       - ecoflow-net
 
