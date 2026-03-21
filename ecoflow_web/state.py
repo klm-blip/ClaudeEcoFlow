@@ -21,6 +21,7 @@ class PowerState:
     volt_b:      Optional[float] = None
     op_mode:     Optional[int]   = None   # 1=backup, 2=self-powered
     soc_pct:     Optional[float] = None
+    eps_mode:    Optional[bool]  = None   # EPS (20ms switchover) on/off
     last_update: float           = 0.0
 
     @property
@@ -48,6 +49,7 @@ class PowerState:
             "volt_a":    self.volt_a,
             "volt_b":    self.volt_b,
             "op_mode":   self.op_mode,
+            "eps_mode":  self.eps_mode,
             "mode_label": self.mode_label,
             "stale":     self.stale,
         }

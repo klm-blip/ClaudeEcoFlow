@@ -390,6 +390,11 @@ button:active{transform:scale(0.97)}
       <button class="mode-btn" id="btn-backup" onclick="sendMode('backup')">Backup</button>
       <button class="mode-btn" id="btn-selfpwr" onclick="sendMode('self_powered')">Self-Powered</button>
     </div>
+    <div style="display:flex;align-items:center;gap:8px;margin:-2px 0 6px;font-size:0.78rem">
+      <span style="color:var(--dim)">EPS (20ms switchover):</span>
+      <button class="mode-btn" id="btn-eps-on" onclick="send({cmd:'toggle_eps',value:true})" style="padding:3px 10px;font-size:0.75rem">ON</button>
+      <button class="mode-btn" id="btn-eps-off" onclick="send({cmd:'toggle_eps',value:false})" style="padding:3px 10px;font-size:0.75rem">OFF</button>
+    </div>
     <div id="override-row" style="display:flex;margin:-6px 0 8px;font-size:0.78rem;color:var(--dim);align-items:center;gap:8px">
       <span>Override: <select id="override-minutes" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:0.78rem">
         <option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 hr</option><option value="120">2 hr</option>
@@ -954,6 +959,11 @@ function render() {
   // ─── Mode buttons ─────────────────────────────────────────────────
   document.getElementById('btn-backup').className = 'mode-btn' + (p.op_mode === 1 ? ' active' : '');
   document.getElementById('btn-selfpwr').className = 'mode-btn' + (p.op_mode === 2 ? ' active' : '');
+
+  // ─── EPS toggle ────────────────────────────────────────────────────
+  const epsOn = p.eps_mode;
+  document.getElementById('btn-eps-on').className = 'mode-btn' + (epsOn === true ? ' active' : '');
+  document.getElementById('btn-eps-off').className = 'mode-btn' + (epsOn === false ? ' active' : '');
 
   // ─── Override status ──────────────────────────────────────────────
   const overrideRow = document.getElementById('override-row');

@@ -29,7 +29,7 @@ from .enphase import EnphasePoller
 from .mqtt_handler import MQTTHandler
 from .proto_codec import (
     build_mode_command, build_charge_command,
-    build_charge_power_command, build_and_wrap,
+    build_charge_power_command, build_eps_command, build_and_wrap,
 )
 from . import logger
 from .notify import TelegramNotifier
@@ -214,6 +214,13 @@ def _handle_command(data: dict):
         mode_int = 2 if sp else 1
         auto.manual_mode_change(mode_int, override_minutes=int(override_min))
         _log_command(f"MODE → {'Self-Powered' if sp else 'Backup'} (override {override_min}m)")
+
+    elif cmd == "toggle_eps":
+        enable = data.get("value", False)
+        payload = build_and_wrap(build_eps_command(enable))
+        mqtt_handler.publish_command(payload, commands_live)
+        power_state.eps_mode = enable  # optimistic local update
+        _log_command(f"EPS → {'ON (20ms switchover)' if enable else 'OFF'}")
 
     elif cmd == "charge_start":
         rate    = int(data.get("rate", 3000))

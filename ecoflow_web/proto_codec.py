@@ -107,12 +107,30 @@ def _encode_field_message(field_number, message_bytes):
 # ─── SHP3 command builders ─────────────────────────────────────────────────
 # DevAplComm.ConfigWrite → Common.Header → Send_Header_Msg
 
-def build_mode_command(self_powered=False, scheduled=False, tou=False):
-    """CfgPanelEnergyStrategyOperateMode on ConfigWrite field 544."""
+def build_mode_command(self_powered=False, scheduled=False, tou=False, eps_mode=None):
+    """CfgPanelEnergyStrategyOperateMode on ConfigWrite field 544.
+
+    Args:
+        self_powered: Enable self-powered mode (battery discharges to home)
+        scheduled: Enable scheduled mode
+        tou: Enable TOU mode
+        eps_mode: Enable EPS (20ms switchover). None = don't include field (preserve current).
+                  True/False explicitly sends the field.
+    """
     mode_msg = b""
     mode_msg += _encode_field_bool(1, self_powered)
     mode_msg += _encode_field_bool(2, scheduled)
     mode_msg += _encode_field_bool(3, tou)
+    if eps_mode is not None:
+        # Must use force=True so that eps_mode=False sends field 4=0 explicitly
+        mode_msg += _encode_field_varint(4, 1 if eps_mode else 0, force=True)
+    return _encode_field_message(544, mode_msg)
+
+
+def build_eps_command(enable):
+    """Standalone EPS toggle — sends only field 4 in ConfigWrite/544.
+    Omits mode fields so current mode is preserved."""
+    mode_msg = _encode_field_varint(4, 1 if enable else 0, force=True)
     return _encode_field_message(544, mode_msg)
 
 def build_charge_command(enable, channel=1, use_normal_chg=False):
