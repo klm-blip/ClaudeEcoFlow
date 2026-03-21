@@ -82,7 +82,12 @@ class KiaAutoController:
                 f"NORMAL: {ep:.1f}\u00a2 < {normal_below:.1f}\u00a2 \u2014 charge to {normal_limit}%"
             )
 
-        return "stop", None, (
+        # Only send stop if the car is actually charging
+        if ks.charging:
+            return "stop", None, (
+                f"EXPENSIVE: {ep:.1f}\u00a2 >= {normal_below:.1f}\u00a2 \u2014 stop charging"
+            )
+        return None, None, (
             f"EXPENSIVE: {ep:.1f}\u00a2 >= {normal_below:.1f}\u00a2 \u2014 stop charging"
         )
 
@@ -113,8 +118,11 @@ class KiaAutoController:
         return True, "ok"
 
     def record(self, action, ac_limit, reason):
-        self.last_action = action
+        # Only update last_action for real commands (charge/stop), not None returns
+        if action is not None:
+            self.last_action = action
         if ac_limit is not None:
             self.last_ac_limit = ac_limit
-        self.last_cmd_ts = time.time()
+        if action is not None:
+            self.last_cmd_ts = time.time()
         self.last_decision = reason
