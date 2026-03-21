@@ -13,7 +13,7 @@ from .config import BATTERY_CAPACITY_WH
 
 log = logging.getLogger("ecoflow")
 
-DEFAULT_LEGACY_COST = 10.5  # cents/kWh — estimated cost of energy already in battery
+DEFAULT_LEGACY_COST = 11.5  # cents/kWh — estimated total cost incl T&D + ~8% AC/DC loss
 
 
 class BatteryCostPool:
