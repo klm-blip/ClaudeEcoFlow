@@ -173,8 +173,7 @@ button:active{transform:scale(0.97)}
 <div class="tab-bar mobile-only">
   <button class="tab-btn active" onclick="switchTab('status')">Status</button>
   <button class="tab-btn" onclick="switchTab('controls')">Controls</button>
-  <button class="tab-btn" onclick="switchTab('history')">History</button>
-  <button class="tab-btn" onclick="switchTab('energy')">Energy</button>
+  <button class="tab-btn" onclick="switchTab('energy')">Energy Use</button>
   <button class="tab-btn" onclick="switchTab('ev')">EV</button>
 </div>
 
@@ -283,6 +282,13 @@ button:active{transform:scale(0.97)}
 <div class="mobile-only" style="padding:8px">
   <div class="section-card">
     <div id="readings-mobile"></div>
+  </div>
+</div>
+<!-- Command log (mobile — in Status tab) -->
+<div class="mobile-only">
+  <div class="log-section" style="padding:8px">
+    <div class="section-title" style="padding:0 2px 6px;color:var(--dim)">Command Log</div>
+    <div class="log-card" id="command-log-mobile"></div>
   </div>
 </div>
 </div><!-- /tab-status -->
@@ -417,73 +423,7 @@ button:active{transform:scale(0.97)}
   </div>
 </div>
 
-<!-- Alerts / Telegram -->
-<div class="section-card" style="margin:8px">
-  <div class="section-title">Telegram Alerts</div>
-  <div style="padding:6px 0">
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <input type="text" id="tg-token" placeholder="Bot token" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem;font-family:var(--font-mono)">
-    </div>
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <input type="text" id="tg-chatids" placeholder="Chat IDs (comma-separated)" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
-      <button onclick="saveTelegram()" style="background:var(--green);color:#000;padding:6px 12px;font-size:0.8rem">Save</button>
-      <button onclick="send({cmd:'telegram_test'})" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 12px;font-size:0.8rem">Test</button>
-    </div>
-    <div id="tg-status" style="font-size:0.75rem;color:var(--dim);margin-bottom:8px"></div>
-    <div class="section-title" style="font-size:0.8rem;margin-top:4px">Alert Events</div>
-    <div id="tg-events" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
-  </div>
-</div>
 </div><!-- /tab-controls -->
-
-<!-- ═══ HISTORY TAB ═══════════════════════════════════════════════════════ -->
-<div id="tab-history" class="tab-content">
-<div class="chart-section">
-  <div class="chart-card">
-    <div class="section-title">Power History (15 min)</div>
-    <canvas id="history-canvas" class="chart-canvas"></canvas>
-  </div>
-</div>
-<div class="log-section">
-  <div class="section-title" style="padding:0 2px 6px;color:var(--dim)">Command Log</div>
-  <div class="log-card" id="command-log"></div>
-</div>
-</div><!-- /tab-history -->
-
-<!-- ═══ ENERGY TAB ════════════════════════════════════════════════════════ -->
-<div id="tab-energy" class="tab-content">
-<div class="chart-section">
-  <div class="chart-card">
-    <div class="section-title">Current Hour</div>
-    <div id="energy-current" style="font-size:0.85rem;color:var(--text)">Waiting for data...</div>
-  </div>
-</div>
-<div class="chart-section">
-  <div class="chart-card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div class="section-title" style="margin-bottom:0">Today's Energy</div>
-      <div style="display:flex;gap:4px;align-items:center">
-        <button id="energy-prev" onclick="changeEnergyDate(-1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&lt;</button>
-        <input type="date" id="energy-date" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.75rem;font-family:var(--font-mono)" onchange="fetchEnergyDay(this.value)">
-        <button id="energy-next" onclick="changeEnergyDate(1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&gt;</button>
-      </div>
-    </div>
-    <div id="energy-table" style="overflow-x:auto"></div>
-    <div id="energy-day-summary" style="margin-top:8px;font-size:0.82rem;color:var(--dim)"></div>
-  </div>
-</div>
-<div class="chart-section">
-  <div class="chart-card">
-    <div class="section-title">Period Summaries</div>
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <button class="energy-period-btn" onclick="fetchEnergySummary('day')" style="background:var(--blue);color:#fff;padding:4px 12px;font-size:0.78rem;border-radius:4px">Today</button>
-      <button class="energy-period-btn" onclick="fetchEnergySummary('week')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Week</button>
-      <button class="energy-period-btn" onclick="fetchEnergySummary('month')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Month</button>
-    </div>
-    <div id="energy-summary" style="font-size:0.82rem"></div>
-  </div>
-</div>
-</div><!-- /tab-energy -->
 
 <!-- ═══ EV Tab ══════════════════════════════════════════════════════════ -->
 <div id="tab-ev" class="tab-content">
@@ -588,6 +528,75 @@ button:active{transform:scale(0.97)}
 
 </div><!-- /tab-ev -->
 
+<!-- ═══ ENERGY USE TAB ═════════════════════════════════════════════════════ -->
+<div id="tab-energy" class="tab-content">
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Power History (15 min)</div>
+    <canvas id="history-canvas" class="chart-canvas"></canvas>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Current Hour</div>
+    <div id="energy-current" style="font-size:0.85rem;color:var(--text)">Waiting for data...</div>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="section-title" style="margin-bottom:0">Today's Energy</div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <button id="energy-prev" onclick="changeEnergyDate(-1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&lt;</button>
+        <input type="date" id="energy-date" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.75rem;font-family:var(--font-mono)" onchange="fetchEnergyDay(this.value)">
+        <button id="energy-next" onclick="changeEnergyDate(1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&gt;</button>
+      </div>
+    </div>
+    <div id="energy-table" style="overflow-x:auto"></div>
+    <div id="energy-day-summary" style="margin-top:8px;font-size:0.82rem;color:var(--dim)"></div>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Period Summaries</div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="energy-period-btn" onclick="fetchEnergySummary('day')" style="background:var(--blue);color:#fff;padding:4px 12px;font-size:0.78rem;border-radius:4px">Today</button>
+      <button class="energy-period-btn" onclick="fetchEnergySummary('week')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Week</button>
+      <button class="energy-period-btn" onclick="fetchEnergySummary('month')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Month</button>
+    </div>
+    <div id="energy-summary" style="font-size:0.82rem"></div>
+  </div>
+</div>
+</div><!-- /tab-energy -->
+
+<!-- ═══ COMMAND LOG (bottom of page, always visible) ══════════════════════ -->
+<div class="desktop-only">
+<div class="log-section" style="padding:8px">
+  <div class="section-title" style="padding:0 2px 6px;color:var(--dim)">Command Log</div>
+  <div class="log-card" id="command-log"></div>
+</div>
+</div>
+
+<!-- ═══ TELEGRAM (very bottom) ════════════════════════════════════════════ -->
+<div class="desktop-only">
+<div class="section-card" style="margin:8px">
+  <div class="section-title">Telegram Alerts</div>
+  <div style="padding:6px 0">
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input type="text" id="tg-token" placeholder="Bot token" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem;font-family:var(--font-mono)">
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input type="text" id="tg-chatids" placeholder="Chat IDs (comma-separated)" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
+      <button onclick="saveTelegram()" style="background:var(--green);color:#000;padding:6px 12px;font-size:0.8rem">Save</button>
+      <button onclick="send({cmd:'telegram_test'})" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 12px;font-size:0.8rem">Test</button>
+    </div>
+    <div id="tg-status" style="font-size:0.75rem;color:var(--dim);margin-bottom:8px"></div>
+    <div class="section-title" style="font-size:0.8rem;margin-top:4px">Alert Events</div>
+    <div id="tg-events" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
+  </div>
+</div>
+</div>
+
 <script>
 // ═══ WebSocket ═══════════════════════════════════════════════════════════
 let ws = null, state = null, reconnectTimer = null;
@@ -656,8 +665,9 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
+  // Find the button that triggered this tab (match by data or onclick)
   document.querySelectorAll('.tab-btn').forEach(btn => {
-    if (btn.textContent.toLowerCase() === name) btn.classList.add('active');
+    if (btn.getAttribute('onclick') === "switchTab('" + name + "')") btn.classList.add('active');
   });
 }
 
@@ -968,12 +978,15 @@ function render() {
   if (rm) rm.innerHTML = readingsHTML;
 
   // ─── Command log ──────────────────────────────────────────────────
-  const logEl = document.getElementById('command-log');
   if (state.command_log) {
-    logEl.innerHTML = state.command_log.map(e =>
+    const logHTML = state.command_log.map(e =>
       '<div class="log-entry ' + (e.live ? 'log-live' : 'log-dry') + '">' +
       e.ts + ' [' + (e.live ? 'LIVE' : 'DRY') + '] ' + escHtml(e.text) + '</div>'
     ).reverse().join('');
+    const logEl = document.getElementById('command-log');
+    const logElM = document.getElementById('command-log-mobile');
+    if (logEl) logEl.innerHTML = logHTML;
+    if (logElM) logElM.innerHTML = logHTML;
   }
 
   // ─── Telegram ────────────────────────────────────────────────────
