@@ -90,6 +90,43 @@ class PriceState:
         }
 
 
+@dataclass
+class KiaState:
+    soc_pct:         Optional[float] = None
+    charging:        bool = False
+    plugged_in:      bool = False
+    range_miles:     Optional[float] = None
+    odometer:        Optional[float] = None
+    ac_charge_limit: Optional[int]   = None
+    dc_charge_limit: Optional[int]   = None
+    vehicle_name:    str = ""
+    vehicle_id:      str = ""
+    last_update:     float = 0.0
+    error:           str = ""
+    available:       bool = False     # True if kia_credentials.txt exists
+
+    @property
+    def stale(self):
+        return self.last_update > 0 and (time.time() - self.last_update) > 600
+
+    def to_dict(self):
+        return {
+            "soc_pct":         self.soc_pct,
+            "charging":        self.charging,
+            "plugged_in":      self.plugged_in,
+            "range_miles":     self.range_miles,
+            "odometer":        self.odometer,
+            "ac_charge_limit": self.ac_charge_limit,
+            "dc_charge_limit": self.dc_charge_limit,
+            "vehicle_name":    self.vehicle_name,
+            "vehicle_id":      self.vehicle_id,
+            "stale":           self.stale,
+            "error":           self.error,
+            "available":       self.available,
+            "last_update":     self.last_update,
+        }
+
+
 def parse_payload(payload: bytes, state: PowerState) -> bool:
     """Parse MQTT telemetry protobuf into PowerState. Returns True if any field updated."""
     try:

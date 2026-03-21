@@ -18,11 +18,13 @@ import time
 from flask import Flask, send_from_directory, request
 from flask_sock import Sock
 
-from .config import COLORS, STATE_FILE
-from .state import PowerState, PriceState
+from .config import COLORS, STATE_FILE, KIA_CREDENTIALS_FILE
+from .state import PowerState, PriceState, KiaState
 from .history import HistoryBuffer
 from .comed import ComedPoller
 from .automation import AutoThresholds, AutoController
+from .kia import KiaPoller
+from .kia_automation import KiaAutoController
 from .mqtt_handler import MQTTHandler
 from .proto_codec import (
     build_mode_command, build_charge_command,
@@ -43,6 +45,11 @@ history      = HistoryBuffer()
 thresholds   = AutoThresholds.load()
 auto         = AutoController()
 auto.enabled = True     # automation ON by default (production)
+
+kia_state       = KiaState()
+kia_auto        = KiaAutoController()
+kia_auto.enabled = True   # EV automation ON by default (production)
+kia_poller      = None    # set in main() if credentials exist
 
 commands_live   = True    # LIVE commands by default (production)
 command_log     = []      # [{ts, live, text}, ...] last 30 entries
@@ -148,6 +155,13 @@ def _build_state_msg():
         "telegram":       notifier.to_dict(),
         "battery_cost":   battery_pool.to_dict(),
         "energy_hour":    energy_tracker.to_dict(),
+        "kia":            kia_state.to_dict(),
+        "kia_auto": {
+            "enabled":       kia_auto.enabled,
+            "last_decision": kia_auto.last_decision,
+            "override_remaining": max(0, int(kia_auto.manual_override_until - time.time()))
+                                  if kia_auto.manual_override_until > time.time() else 0,
+        },
     })
 
 
@@ -280,6 +294,39 @@ def _handle_command(data: dict):
             except Exception as e:
                 log.warning("Failed to save telegram events: %s", e)
 
+    # ─── Kia EV commands ──────────────────────────────────────────────
+    elif cmd == "kia_charge_start":
+        if kia_poller:
+            ok, msg = kia_poller.start_charge()
+            _log_command(f"KIA CHARGE START: {msg}")
+            kia_auto.manual_override(minutes=int(data.get("override_minutes", 15)))
+
+    elif cmd == "kia_charge_stop":
+        if kia_poller:
+            ok, msg = kia_poller.stop_charge()
+            _log_command(f"KIA CHARGE STOP: {msg}")
+            kia_auto.manual_override(minutes=int(data.get("override_minutes", 15)))
+
+    elif cmd == "kia_set_limits":
+        if kia_poller:
+            ac = int(data.get("ac_limit", 90))
+            dc = int(data.get("dc_limit", 80))
+            ok, msg = kia_poller.set_charge_limits(ac, dc)
+            _log_command(f"KIA LIMITS: {msg}")
+
+    elif cmd == "kia_toggle_auto":
+        kia_auto.enabled = not kia_auto.enabled
+        _log_command(f"KIA AUTO {'ON' if kia_auto.enabled else 'OFF'}")
+
+    elif cmd == "kia_cancel_override":
+        kia_auto.cancel_override()
+        _log_command("KIA override cancelled")
+
+    elif cmd == "kia_refresh":
+        if kia_poller:
+            kia_poller.force_refresh()
+            _log_command("KIA force refresh")
+
     _broadcast()
 
 
@@ -378,6 +425,62 @@ def _run_automation():
             "🚨 <b>Grid Outage Detected</b>\nBattery is powering home. Grid appears down.")
 
 
+# ─── Kia Automation ────────────────────────────────────────────────────────
+
+def _run_kia_automation():
+    """Evaluate Kia charge decision and execute if appropriate."""
+    if not kia_poller or not kia_state.available:
+        return
+
+    action, ac_limit, reason = kia_auto.decide(price_state, kia_state, thresholds)
+
+    ok, why = kia_auto.should_send(action, ac_limit)
+    if not ok:
+        if why == "no change":
+            kia_auto.last_decision = reason or kia_auto.last_decision
+        elif "manual override" in why:
+            kia_auto.last_decision = f"OVERRIDE: {reason} (paused \u2014 {why})"
+        else:
+            kia_auto.last_decision = reason or kia_auto.last_decision
+        return
+
+    kia_auto.last_decision = reason or kia_auto.last_decision
+
+    if action == "charge":
+        # Set AC limit first, then start charging
+        if ac_limit and ac_limit != kia_auto.last_ac_limit:
+            dc = getattr(thresholds, "kia_dc_limit", 80)
+            kia_poller.set_charge_limits(ac_limit, dc)
+        if kia_auto.last_action != "charge":
+            success, msg = kia_poller.start_charge()
+            if success and commands_live:
+                _log_command(f"KIA AUTO: {reason}")
+                ep_str = f"{price_state.effective_price:.1f}\u00a2" if price_state.effective_price else "?"
+                notifier.notify("kia_charge_start",
+                    f"\U0001F697 <b>EV Charging</b> to {ac_limit}%\nPrice: {ep_str}")
+        else:
+            _log_command(f"KIA AUTO: {reason}")
+    elif action == "stop":
+        if kia_auto.last_action != "stop":
+            success, msg = kia_poller.stop_charge()
+            if success and commands_live:
+                _log_command(f"KIA AUTO: {reason}")
+                ep_str = f"{price_state.effective_price:.1f}\u00a2" if price_state.effective_price else "?"
+                notifier.notify("kia_charge_stop",
+                    f"\U0001F6D1 <b>EV Charge Stopped</b>\nPrice: {ep_str}")
+        else:
+            _log_command(f"KIA AUTO: {reason}")
+
+    kia_auto.record(action, ac_limit, reason)
+
+
+def _on_kia_update():
+    """Called from Kia poller thread when vehicle status updates."""
+    _broadcast()
+    if kia_auto.enabled:
+        _run_kia_automation()
+
+
 # ─── Callbacks ──────────────────────────────────────────────────────────────
 
 def _on_telemetry_update():
@@ -421,6 +524,8 @@ def _on_price_update():
     _broadcast()
     if auto.enabled:
         _run_automation()
+    if kia_auto.enabled:
+        _run_kia_automation()
 
 
 # ─── Periodic tick (30s automation re-eval) ─────────────────────────────────
@@ -462,7 +567,9 @@ def _tick_loop():
         _tick_count += 1
         if auto.enabled:
             _run_automation()
-            _broadcast()
+        if kia_auto.enabled:
+            _run_kia_automation()
+        _broadcast()
         # Save runtime state every ~60s (every 2 ticks)
         if _tick_count % 2 == 0:
             _save_runtime_state()
@@ -471,7 +578,7 @@ def _tick_loop():
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 def main():
-    global mqtt_handler
+    global mqtt_handler, kia_poller
 
     log.info("Starting EcoFlow Web Dashboard...")
 
@@ -487,6 +594,14 @@ def main():
     comed = ComedPoller(price_state, _on_price_update)
     comed.start()
     log.info("ComEd poller started")
+
+    # Start Kia poller (if credentials exist)
+    import os
+    if os.path.exists(KIA_CREDENTIALS_FILE):
+        kia_poller = KiaPoller(kia_state, _on_kia_update)
+        kia_poller.start()
+    else:
+        log.info("Kia credentials not found — EV features disabled")
 
     # Start periodic automation tick
     threading.Thread(target=_tick_loop, daemon=True).start()

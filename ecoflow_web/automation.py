@@ -48,6 +48,13 @@ class AutoThresholds:
 
     glide_minutes:      float = 5.0    # minutes to sustain below discharge threshold before switching to backup
 
+    # Kia EV charging thresholds
+    kia_soak_below:      float = 1.0    # cents — charge to 100% below this price
+    kia_normal_below:    float = 6.0    # cents — charge to normal limit below this; stop above
+    kia_ac_limit_soak:   int   = 100    # % AC limit during soak
+    kia_ac_limit_normal: int   = 90     # % AC limit during normal
+    kia_dc_limit:        int   = 80     # % DC limit (rarely changes)
+
     def save(self):
         """Persist current thresholds to JSON file."""
         try:

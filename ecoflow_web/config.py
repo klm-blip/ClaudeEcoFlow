@@ -27,11 +27,16 @@ COMED_HOURAVG_URL  = "https://hourlypricing.comed.com/api?type=currenthouraverag
 # ─── Battery ──────────────────────────────────────────────────────────────
 BATTERY_CAPACITY_WH = 49152   # 8 × 6144 Wh (Delta Pro Ultra X × 8 batteries)
 
+# ─── Kia EV ──────────────────────────────────────────────────────────────
+KIA_POLL_SECONDS = 300   # 5 minutes (stay under 200 calls/day limit)
+
 # ─── Paths ────────────────────────────────────────────────────────────────
 _PROJECT_DIR    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 THRESHOLDS_FILE = os.path.join(_PROJECT_DIR, "ecoflow_thresholds.json")
 STATE_FILE      = os.path.join(_PROJECT_DIR, "ecoflow_state.json")
 CREDENTIALS_FILE = os.path.join(_PROJECT_DIR, "ecoflow_credentials.txt")
+KIA_CREDENTIALS_FILE = os.path.join(_PROJECT_DIR, "kia_credentials.txt")
+KIA_TOKEN_FILE       = os.path.join(_PROJECT_DIR, "kia_token.json")
 
 # ─── Credential file loader ────────────────────────────────────────────────
 def _load_credentials():

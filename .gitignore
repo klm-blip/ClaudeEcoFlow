@@ -1,6 +1,9 @@
 # Credentials and config with secrets - never commit
 ecoflow_credentials.txt
 ecoflow_thresholds.json
+kia_credentials.txt
+kia_token.json
+ecoflow_state.json
 
 # Reference repos (cloned external repos, not our code)
 references/

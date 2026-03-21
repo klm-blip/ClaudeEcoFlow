@@ -175,6 +175,7 @@ button:active{transform:scale(0.97)}
   <button class="tab-btn" onclick="switchTab('controls')">Controls</button>
   <button class="tab-btn" onclick="switchTab('history')">History</button>
   <button class="tab-btn" onclick="switchTab('energy')">Energy</button>
+  <button class="tab-btn" onclick="switchTab('ev')">EV</button>
 </div>
 
 <!-- ═══ STATUS TAB (mobile) / always visible (desktop) ════════════════════ -->
@@ -483,6 +484,109 @@ button:active{transform:scale(0.97)}
 </div>
 </div><!-- /tab-energy -->
 
+<!-- ═══ EV Tab ══════════════════════════════════════════════════════════ -->
+<div id="tab-ev" class="tab-content">
+
+<!-- EV Status Pillars -->
+<div class="pillars">
+  <div class="pill">
+    <div class="hero" id="ev-soc" style="color:var(--green)">--</div>
+    <div class="subtitle" id="ev-charge-status">Unknown</div>
+    <div class="detail" id="ev-range">--</div>
+    <div class="soc-bar"><div class="fill" id="ev-soc-fill" style="width:0;background:var(--green)"></div></div>
+  </div>
+  <div class="pill">
+    <div class="hero" id="ev-plug-icon" style="font-size:1.4rem;color:var(--dim)">&#x1F50C;</div>
+    <div class="subtitle" id="ev-plug-status">Unknown</div>
+    <div class="detail" id="ev-vehicle-name">--</div>
+  </div>
+  <div class="pill">
+    <div class="hero" id="ev-ac-limit" style="color:var(--blue)">--</div>
+    <div class="subtitle">AC Limit</div>
+    <div class="detail" id="ev-dc-limit-text">DC: --</div>
+  </div>
+</div>
+
+<!-- EV Automation Strip -->
+<div class="auto-strip" style="margin-top:4px">
+  <div class="auto-dot" id="ev-auto-dot"></div>
+  <span id="ev-auto-text" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">&mdash;</span>
+</div>
+
+<!-- EV Controls -->
+<div class="two-col" style="margin-top:4px">
+  <div class="section-card">
+    <div class="section-title">Charge Control</div>
+    <div class="charge-btns" style="display:flex;gap:6px;margin-bottom:10px">
+      <button onclick="send({cmd:'kia_charge_start'})" style="flex:1;background:var(--green);color:#000;font-weight:600">Start Charge</button>
+      <button onclick="send({cmd:'kia_charge_stop'})" style="flex:1;background:var(--red);color:#fff;font-weight:600">Stop Charge</button>
+    </div>
+    <button onclick="send({cmd:'kia_refresh'})" style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);margin-bottom:10px">Refresh Status</button>
+
+    <div class="section-title" style="margin-top:8px">AC Charge Limit</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button onclick="sendKiaLimit(80)" class="ev-limit-btn" style="padding:8px 14px;background:var(--panel2);border:1px solid var(--border);color:var(--text)">80%</button>
+      <button onclick="sendKiaLimit(90)" class="ev-limit-btn" style="padding:8px 14px;background:var(--panel2);border:1px solid var(--border);color:var(--text)">90%</button>
+      <button onclick="sendKiaLimit(100)" class="ev-limit-btn" style="padding:8px 14px;background:var(--panel2);border:1px solid var(--border);color:var(--text)">100%</button>
+    </div>
+
+    <!-- Manual override -->
+    <div style="margin-top:12px;display:flex;align-items:center;gap:6px" id="ev-override-row">
+      <span style="font-size:0.78rem;color:var(--dim)" id="ev-override-status"></span>
+      <button id="ev-cancel-override" onclick="send({cmd:'kia_cancel_override'})" style="display:none;background:var(--red);color:#fff;font-size:0.75rem;padding:4px 10px">Cancel</button>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-title">EV Automation</div>
+    <div class="auto-toggle" style="display:flex;gap:6px;margin-bottom:12px">
+      <button id="ev-btn-auto-on" onclick="send({cmd:'kia_toggle_auto'})" style="flex:1;padding:10px;font-weight:600">ON</button>
+      <button id="ev-btn-auto-off" onclick="send({cmd:'kia_toggle_auto'})" style="flex:1;padding:10px;font-weight:600">OFF</button>
+    </div>
+
+    <div class="section-title">Thresholds</div>
+    <div style="font-size:0.82rem">
+      <div class="adj-row" style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+        <span>Soak below</span>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="adj-btn" onclick="adjThreshold('kia_soak_below',-0.5)" style="width:32px;height:32px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:1rem">&minus;</button>
+          <span id="ev-th-soak" style="min-width:40px;text-align:center">--</span>
+          <button class="adj-btn" onclick="adjThreshold('kia_soak_below',0.5)" style="width:32px;height:32px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:1rem">+</button>
+        </div>
+      </div>
+      <div class="adj-row" style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+        <span>Normal below</span>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="adj-btn" onclick="adjThreshold('kia_normal_below',-0.5)" style="width:32px;height:32px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:1rem">&minus;</button>
+          <span id="ev-th-normal" style="min-width:40px;text-align:center">--</span>
+          <button class="adj-btn" onclick="adjThreshold('kia_normal_below',0.5)" style="width:32px;height:32px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:1rem">+</button>
+        </div>
+      </div>
+      <div class="adj-row" style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+        <span>Soak limit</span>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="adj-btn" onclick="adjThreshold('kia_ac_limit_soak',-10)" style="width:32px;height:32px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:1rem">&minus;</button>
+          <span id="ev-th-soak-lim" style="min-width:40px;text-align:center">--</span>
+          <button class="adj-btn" onclick="adjThreshold('kia_ac_limit_soak',10)" style="width:32px;height:32px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:1rem">+</button>
+        </div>
+      </div>
+      <div class="adj-row" style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+        <span>Normal limit</span>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="adj-btn" onclick="adjThreshold('kia_ac_limit_normal',-10)" style="width:32px;height:32px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:1rem">&minus;</button>
+          <span id="ev-th-normal-lim" style="min-width:40px;text-align:center">--</span>
+          <button class="adj-btn" onclick="adjThreshold('kia_ac_limit_normal',10)" style="width:32px;height:32px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:1rem">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- EV Error -->
+<div id="ev-error" style="display:none;margin:0 12px;padding:8px 12px;background:#4a1a1a;border:1px solid var(--red);border-radius:6px;font-size:0.82rem;color:var(--red)"></div>
+
+</div><!-- /tab-ev -->
+
 <script>
 // ═══ WebSocket ═══════════════════════════════════════════════════════════
 let ws = null, state = null, reconnectTimer = null;
@@ -520,6 +624,11 @@ function sendCharge(start) {
 }
 
 // ═══ Threshold Adjustment ════════════════════════════════════════════════
+function sendKiaLimit(pct) {
+  const dc = state && state.thresholds.kia_dc_limit ? state.thresholds.kia_dc_limit : 80;
+  send({cmd:'kia_set_limits', ac_limit: pct, dc_limit: dc});
+}
+
 function adjThreshold(key, delta) {
   if (!state) return;
   let val = state.thresholds[key];
@@ -531,7 +640,9 @@ function adjThreshold(key, delta) {
     low_charge_below:[-5,15], mid_charge_below:[-5,10], high_charge_below:[-5,5],
     emergency_charge_below:[-5,30],
     low_rate:[600,12000], mid_rate:[600,12000], high_rate:[600,12000], rate_emergency:[600,12000],
-    td_rate_cents:[0,30], glide_minutes:[0,15]
+    td_rate_cents:[0,30], glide_minutes:[0,15],
+    kia_soak_below:[-5,10], kia_normal_below:[0,20],
+    kia_ac_limit_soak:[50,100], kia_ac_limit_normal:[50,100]
   };
   if (clamps[key]) { val = Math.max(clamps[key][0], Math.min(clamps[key][1], val)); }
   // Round to avoid float drift
@@ -868,6 +979,104 @@ function render() {
 
   // ─── History chart ─────────────────────────────────────────────────
   drawHistory();
+
+  // ─── EV Tab ─────────────────────────────────────────────────────────
+  renderEV();
+}
+
+function renderEV() {
+  const k = state.kia;
+  const ka = state.kia_auto;
+  const t = state.thresholds;
+  if (!k) return;
+
+  // Hide EV tab button if not available
+  const evBtn = document.querySelector('.tab-btn[onclick*="ev"]');
+  if (evBtn) evBtn.style.display = k.available ? '' : 'none';
+  if (!k.available) return;
+
+  // SOC
+  const socEl = document.getElementById('ev-soc');
+  if (k.soc_pct != null) {
+    socEl.textContent = Math.round(k.soc_pct) + '%';
+    socEl.style.color = k.soc_pct < 20 ? 'var(--red)' : k.soc_pct < 50 ? 'var(--amber)' : 'var(--green)';
+    document.getElementById('ev-soc-fill').style.width = k.soc_pct + '%';
+    document.getElementById('ev-soc-fill').style.background = socEl.style.color;
+  } else {
+    socEl.textContent = '--';
+  }
+
+  // Charge status
+  const csEl = document.getElementById('ev-charge-status');
+  if (k.charging) { csEl.textContent = 'Charging'; csEl.style.color = 'var(--green)'; }
+  else { csEl.textContent = 'Not Charging'; csEl.style.color = 'var(--dim)'; }
+
+  // Range
+  document.getElementById('ev-range').textContent = k.range_miles != null ? k.range_miles.toFixed(0) + ' mi range' : '--';
+
+  // Plug status
+  const plugEl = document.getElementById('ev-plug-status');
+  const plugIcon = document.getElementById('ev-plug-icon');
+  if (k.plugged_in) { plugEl.textContent = 'Plugged In'; plugIcon.style.color = 'var(--green)'; }
+  else { plugEl.textContent = 'Unplugged'; plugIcon.style.color = 'var(--dim)'; }
+
+  // Vehicle name
+  document.getElementById('ev-vehicle-name').textContent = k.vehicle_name || 'Kia EV9';
+
+  // AC/DC limits
+  document.getElementById('ev-ac-limit').textContent = k.ac_charge_limit != null ? k.ac_charge_limit + '%' : (t.kia_ac_limit_normal || 90) + '%';
+  document.getElementById('ev-dc-limit-text').textContent = 'DC: ' + (k.dc_charge_limit != null ? k.dc_charge_limit + '%' : (t.kia_dc_limit || 80) + '%');
+
+  // Automation strip
+  const evDot = document.getElementById('ev-auto-dot');
+  const evText = document.getElementById('ev-auto-text');
+  evDot.className = 'auto-dot ' + (ka.enabled ? 'on' : 'off');
+  evText.textContent = ka.last_decision || '\u2014';
+
+  // Auto toggle
+  const onBtn = document.getElementById('ev-btn-auto-on');
+  const offBtn = document.getElementById('ev-btn-auto-off');
+  onBtn.className = ka.enabled ? 'active' : '';
+  offBtn.className = ka.enabled ? '' : 'active';
+  onBtn.style.background = ka.enabled ? 'var(--green)' : 'var(--panel2)';
+  onBtn.style.color = ka.enabled ? '#000' : 'var(--dim)';
+  offBtn.style.background = ka.enabled ? 'var(--panel2)' : 'var(--red)';
+  offBtn.style.color = ka.enabled ? 'var(--dim)' : '#fff';
+
+  // Override
+  const evOverride = document.getElementById('ev-override-status');
+  const evCancel = document.getElementById('ev-cancel-override');
+  if (ka.override_remaining > 0) {
+    const mins = Math.floor(ka.override_remaining / 60);
+    const secs = ka.override_remaining % 60;
+    evOverride.textContent = 'Override: ' + mins + 'm ' + secs + 's';
+    evOverride.style.color = 'var(--amber)';
+    evCancel.style.display = '';
+  } else {
+    evOverride.textContent = '';
+    evCancel.style.display = 'none';
+  }
+
+  // Thresholds
+  if (t.kia_soak_below != null) document.getElementById('ev-th-soak').textContent = t.kia_soak_below.toFixed(1) + '\u00a2';
+  if (t.kia_normal_below != null) document.getElementById('ev-th-normal').textContent = t.kia_normal_below.toFixed(1) + '\u00a2';
+  if (t.kia_ac_limit_soak != null) document.getElementById('ev-th-soak-lim').textContent = t.kia_ac_limit_soak + '%';
+  if (t.kia_ac_limit_normal != null) document.getElementById('ev-th-normal-lim').textContent = t.kia_ac_limit_normal + '%';
+
+  // Error
+  const errEl = document.getElementById('ev-error');
+  if (k.error) {
+    errEl.textContent = k.error;
+    errEl.style.display = '';
+  } else {
+    errEl.style.display = 'none';
+  }
+
+  // Staleness
+  if (k.last_update > 0) {
+    const ago = Math.round((Date.now()/1000 - k.last_update) / 60);
+    document.getElementById('ev-range').textContent += (k.range_miles != null ? ' \u2022 ' : '') + ago + 'm ago';
+  }
 }
 
 // ═══ Helpers ═════════════════════════════════════════════════════════════
