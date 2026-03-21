@@ -893,10 +893,19 @@ function render() {
   } else {
     bcEl.textContent = '';
   }
-  // Efficiency
+  // Efficiency — show charge, discharge, and roundtrip
   const effEl = document.getElementById('batt-efficiency');
-  if (bc && bc.efficiency_pct > 0) {
-    effEl.textContent = 'Charge efficiency: ~' + bc.efficiency_pct.toFixed(0) + '%';
+  if (bc) {
+    let parts = [];
+    if (bc.charge_efficiency_pct > 0)
+      parts.push('AC→DC ' + bc.charge_efficiency_pct.toFixed(0) + '%');
+    if (bc.discharge_efficiency_pct > 0)
+      parts.push('DC→AC ' + bc.discharge_efficiency_pct.toFixed(0) + '%');
+    if (bc.roundtrip_efficiency_pct > 0)
+      parts.push('RT ' + bc.roundtrip_efficiency_pct.toFixed(0) + '%');
+    if (bc.effective_cost_per_kwh > 0)
+      parts.push('eff cost ' + bc.effective_cost_per_kwh.toFixed(1) + '¢');
+    effEl.textContent = parts.length ? parts.join(' · ') : '';
   } else {
     effEl.textContent = '';
   }

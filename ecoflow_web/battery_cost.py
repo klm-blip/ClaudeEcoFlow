@@ -1,11 +1,13 @@
 """
-Battery cost pool: two-layer FIFO model with AC/DC efficiency tracking.
+Battery cost pool: two-layer FIFO model with bidirectional efficiency tracking.
+
+Tracks both charge (AC→DC) and discharge (DC→AC) efficiency separately,
+giving a true roundtrip efficiency for profitability calculations.
 
 Legacy layer (estimated from initial SOC) is consumed first on discharge,
 so the pool transitions to purely observed data as quickly as possible.
 """
 
-import json
 import logging
 import time
 
@@ -27,15 +29,28 @@ class BatteryCostPool:
         self.observed_wh = 0.0
         self.observed_cost_cents = 0.0
 
-        # Efficiency tracker — per charge session
+        # Charge efficiency tracker (AC→DC) — per charge session
         self._charging = False
         self._session_meter_wh = 0.0    # energy measured at battery meter during session
         self._session_soc_start = None  # SOC% when charge session began
 
-        # Rolling efficiency estimate
-        self.efficiency_pct = 0.0       # 0 = not yet measured
-        self._efficiency_total_in = 0.0
-        self._efficiency_total_stored = 0.0
+        # Rolling charge efficiency estimate
+        self.charge_efficiency_pct = 0.0       # 0 = not yet measured
+        self._charge_total_in = 0.0            # total AC Wh consumed for charging
+        self._charge_total_stored = 0.0        # total DC Wh stored (from SOC change)
+
+        # Discharge efficiency tracker (DC→AC) — per discharge session
+        self._discharging = False
+        self._discharge_ac_wh = 0.0     # AC Wh output by inverter (|battery_w|) during session
+        self._discharge_soc_start = None  # SOC% when discharge session began
+
+        # Rolling discharge efficiency estimate
+        self.discharge_efficiency_pct = 0.0    # 0 = not yet measured
+        self._discharge_total_out = 0.0        # total DC Wh consumed from battery (SOC change)
+        self._discharge_total_delivered = 0.0  # total AC Wh delivered to home
+
+        # Legacy alias for backward compat (charge efficiency)
+        self.efficiency_pct = 0.0
 
         # Timing
         self._last_ts = 0.0
@@ -43,8 +58,16 @@ class BatteryCostPool:
     # ── Core update (called every telemetry tick ~5s) ─────────────────────
 
     def update(self, battery_w: float, effective_price: float,
-               soc_pct: float = None):
-        """Accumulate charge cost / drain on discharge. Returns actual dt used."""
+               soc_pct: float = None, **kwargs):
+        """Accumulate charge cost / drain on discharge. Returns actual dt used.
+
+        Args:
+            battery_w: Battery power (positive=charging, negative=discharging).
+                       This is AC-side (measured at inverter/panel), so it already
+                       reflects conversion losses in both directions.
+            effective_price: Total price including T&D (cents/kWh).
+            soc_pct: Current battery SOC percentage.
+        """
         now = time.time()
         if self._last_ts <= 0:
             self._last_ts = now
@@ -62,12 +85,16 @@ class BatteryCostPool:
             self.observed_wh += energy_wh
             self.observed_cost_cents += cost_cents
 
-            # Efficiency session tracking
+            # Charge efficiency session tracking
             if not self._charging:
                 self._charging = True
                 self._session_meter_wh = 0.0
                 self._session_soc_start = soc_pct
             self._session_meter_wh += energy_wh
+
+            # End discharge session if we were discharging
+            if self._discharging:
+                self._end_discharge_session(soc_pct)
 
         elif battery_w < -50:
             # ── Discharging (FIFO: legacy first) ──────────────────────
@@ -94,10 +121,22 @@ class BatteryCostPool:
             if self._charging:
                 self._end_charge_session(soc_pct)
 
+            # Discharge efficiency session tracking
+            # Use |battery_w| (= energy_wh) as AC-side output, not load_w,
+            # because load_w includes grid contribution when battery can't
+            # cover full load.
+            if not self._discharging:
+                self._discharging = True
+                self._discharge_ac_wh = 0.0
+                self._discharge_soc_start = soc_pct
+            self._discharge_ac_wh += energy_wh  # energy_wh = |battery_w| * dt / 3600
+
         else:
-            # Idle — end charge session if one was active
+            # Idle — end any active sessions
             if self._charging:
                 self._end_charge_session(soc_pct)
+            if self._discharging:
+                self._end_discharge_session(soc_pct)
 
         # Clamp
         self.legacy_wh = max(0.0, self.legacy_wh)
@@ -125,7 +164,7 @@ class BatteryCostPool:
     # ── Efficiency tracking ───────────────────────────────────────────────
 
     def _end_charge_session(self, soc_pct: float = None):
-        """Finalize a charge session and update rolling efficiency."""
+        """Finalize a charge session and update rolling charge efficiency (AC→DC)."""
         self._charging = False
         if (self._session_soc_start is not None
                 and soc_pct is not None
@@ -133,21 +172,53 @@ class BatteryCostPool:
             soc_delta = soc_pct - self._session_soc_start
             if soc_delta > 0.5:  # meaningful charge
                 stored_wh = (soc_delta / 100.0) * self.capacity_wh
-                self._efficiency_total_in += self._session_meter_wh
-                self._efficiency_total_stored += stored_wh
-                if self._efficiency_total_in > 0:
-                    self.efficiency_pct = (
-                        self._efficiency_total_stored
-                        / self._efficiency_total_in * 100.0
+                self._charge_total_in += self._session_meter_wh
+                self._charge_total_stored += stored_wh
+                if self._charge_total_in > 0:
+                    self.charge_efficiency_pct = (
+                        self._charge_total_stored
+                        / self._charge_total_in * 100.0
                     )
+                    self.efficiency_pct = self.charge_efficiency_pct  # legacy alias
                 log.info(
                     "Charge session: %.0f Wh metered, %.1f%% SOC gained "
-                    "(%.0f Wh stored), rolling efficiency %.1f%%",
+                    "(%.0f Wh stored), rolling charge efficiency %.1f%%",
                     self._session_meter_wh, soc_delta, stored_wh,
-                    self.efficiency_pct,
+                    self.charge_efficiency_pct,
                 )
         self._session_meter_wh = 0.0
         self._session_soc_start = None
+
+    def _end_discharge_session(self, soc_pct: float = None):
+        """Finalize a discharge session and update rolling discharge efficiency (DC→AC).
+
+        Measures: how many AC Wh did the inverter output (|battery_w| accumulation)
+        vs how many DC Wh left the battery cells (SOC change × capacity).
+        Efficiency = AC_out / DC_consumed — how much of the DC energy
+        actually makes it to the home after inverter losses.
+        """
+        self._discharging = False
+        if (self._discharge_soc_start is not None
+                and soc_pct is not None
+                and self._discharge_ac_wh > 50):  # ignore tiny sessions
+            soc_delta = self._discharge_soc_start - soc_pct  # positive = SOC dropped
+            if soc_delta > 0.5:  # meaningful discharge
+                consumed_wh = (soc_delta / 100.0) * self.capacity_wh
+                self._discharge_total_out += consumed_wh
+                self._discharge_total_delivered += self._discharge_ac_wh
+                if self._discharge_total_out > 0:
+                    self.discharge_efficiency_pct = (
+                        self._discharge_total_delivered
+                        / self._discharge_total_out * 100.0
+                    )
+                log.info(
+                    "Discharge session: %.1f%% SOC consumed (%.0f Wh DC), "
+                    "%.0f Wh AC delivered, rolling discharge efficiency %.1f%%",
+                    soc_delta, consumed_wh, self._discharge_ac_wh,
+                    self.discharge_efficiency_pct,
+                )
+        self._discharge_ac_wh = 0.0
+        self._discharge_soc_start = None
 
     # ── Properties ────────────────────────────────────────────────────────
 
@@ -174,6 +245,29 @@ class BatteryCostPool:
             return 0.0
         return self.legacy_wh / total * 100.0
 
+    @property
+    def roundtrip_efficiency_pct(self) -> float:
+        """Combined AC→DC→AC roundtrip efficiency.
+        Returns 0 if either direction hasn't been measured yet."""
+        if self.charge_efficiency_pct <= 0 or self.discharge_efficiency_pct <= 0:
+            return 0.0
+        return (self.charge_efficiency_pct / 100.0
+                * self.discharge_efficiency_pct / 100.0
+                * 100.0)
+
+    @property
+    def effective_cost_per_kwh(self) -> float:
+        """True cost per usable kWh delivered to home, accounting for
+        both charge and discharge conversion losses.
+        Falls back to conservative 81% roundtrip if not yet measured."""
+        avg = self.avg_cost_cents_kwh
+        if avg <= 0:
+            return 0.0
+        # avg_cost already reflects charge-side losses (we tracked grid Wh in)
+        # but NOT discharge-side losses — divide by discharge efficiency
+        disch_eff = self.discharge_efficiency_pct / 100.0 if self.discharge_efficiency_pct > 0 else 0.90
+        return avg / disch_eff
+
     # ── Init from SOC ─────────────────────────────────────────────────────
 
     def initialize_from_soc(self, soc_pct: float,
@@ -198,7 +292,11 @@ class BatteryCostPool:
             "total_kwh": round(self.total_wh / 1000.0, 2),
             "avg_cost_cents_kwh": round(self.avg_cost_cents_kwh, 1),
             "legacy_remaining_pct": round(self.legacy_remaining_pct, 1),
-            "efficiency_pct": round(self.efficiency_pct, 1),
+            "efficiency_pct": round(self.charge_efficiency_pct, 1),  # legacy compat
+            "charge_efficiency_pct": round(self.charge_efficiency_pct, 1),
+            "discharge_efficiency_pct": round(self.discharge_efficiency_pct, 1),
+            "roundtrip_efficiency_pct": round(self.roundtrip_efficiency_pct, 1),
+            "effective_cost_per_kwh": round(self.effective_cost_per_kwh, 1),
         }
 
     def save_state(self) -> dict:
@@ -208,9 +306,18 @@ class BatteryCostPool:
             "legacy_cost_cents": self.legacy_cost_cents,
             "observed_wh": self.observed_wh,
             "observed_cost_cents": self.observed_cost_cents,
-            "efficiency_total_in": self._efficiency_total_in,
-            "efficiency_total_stored": self._efficiency_total_stored,
-            "efficiency_pct": self.efficiency_pct,
+            # Charge efficiency (AC→DC)
+            "charge_total_in": self._charge_total_in,
+            "charge_total_stored": self._charge_total_stored,
+            "charge_efficiency_pct": self.charge_efficiency_pct,
+            # Discharge efficiency (DC→AC)
+            "discharge_total_out": self._discharge_total_out,
+            "discharge_total_delivered": self._discharge_total_delivered,
+            "discharge_efficiency_pct": self.discharge_efficiency_pct,
+            # Legacy aliases (backward compat with old state files)
+            "efficiency_total_in": self._charge_total_in,
+            "efficiency_total_stored": self._charge_total_stored,
+            "efficiency_pct": self.charge_efficiency_pct,
         }
 
     def load_state(self, d: dict):
@@ -221,13 +328,28 @@ class BatteryCostPool:
         self.legacy_cost_cents = d.get("legacy_cost_cents", 0.0)
         self.observed_wh = d.get("observed_wh", 0.0)
         self.observed_cost_cents = d.get("observed_cost_cents", 0.0)
-        self._efficiency_total_in = d.get("efficiency_total_in", 0.0)
-        self._efficiency_total_stored = d.get("efficiency_total_stored", 0.0)
-        self.efficiency_pct = d.get("efficiency_pct", 0.0)
+
+        # Charge efficiency — try new keys first, fall back to legacy
+        self._charge_total_in = d.get("charge_total_in",
+                                       d.get("efficiency_total_in", 0.0))
+        self._charge_total_stored = d.get("charge_total_stored",
+                                           d.get("efficiency_total_stored", 0.0))
+        self.charge_efficiency_pct = d.get("charge_efficiency_pct",
+                                            d.get("efficiency_pct", 0.0))
+        self.efficiency_pct = self.charge_efficiency_pct  # legacy alias
+
+        # Discharge efficiency
+        self._discharge_total_out = d.get("discharge_total_out", 0.0)
+        self._discharge_total_delivered = d.get("discharge_total_delivered", 0.0)
+        self.discharge_efficiency_pct = d.get("discharge_efficiency_pct", 0.0)
+
         log.info(
             "Battery pool loaded: legacy %.0f Wh + observed %.0f Wh = %.0f Wh, "
-            "avg %.1f¢/kWh, efficiency %.1f%%",
+            "avg %.1f¢/kWh, charge eff %.1f%%, discharge eff %.1f%%, "
+            "roundtrip %.1f%%, effective cost %.1f¢/kWh",
             self.legacy_wh, self.observed_wh, self.total_wh,
-            self.avg_cost_cents_kwh, self.efficiency_pct,
+            self.avg_cost_cents_kwh, self.charge_efficiency_pct,
+            self.discharge_efficiency_pct, self.roundtrip_efficiency_pct,
+            self.effective_cost_per_kwh,
         )
         return True
