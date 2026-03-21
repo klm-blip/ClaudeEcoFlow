@@ -403,7 +403,7 @@ def _on_telemetry_update():
         energy_tracker.update(
             power_state.grid_w or 0.0,
             power_state.load_w or 0.0,
-            bw, ep,
+            bw, total_cost,
         )
 
     _broadcast()
