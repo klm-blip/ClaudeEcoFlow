@@ -893,8 +893,8 @@ function buildReadings(p, pr) {
     ['Total cost', (pr.effective_price != null && state.thresholds.td_rate_cents > 0) ? (pr.effective_price + state.thresholds.td_rate_cents).toFixed(1) + '\u00a2' : '\u2014', ''],
     ['Batt cost', state.battery_cost && state.battery_cost.avg_cost_cents_kwh > 0 ? state.battery_cost.avg_cost_cents_kwh.toFixed(1) + '\u00a2/kWh' : '\u2014', 'color:var(--amber)'],
     ['Spread', (pr.effective_price != null && state.battery_cost && state.battery_cost.avg_cost_cents_kwh > 0) ?
-      (pr.effective_price - state.battery_cost.avg_cost_cents_kwh).toFixed(1) + '\u00a2' : '\u2014',
-      (pr.effective_price != null && state.battery_cost && pr.effective_price > state.battery_cost.avg_cost_cents_kwh) ? 'color:var(--green)' : 'color:var(--red)'],
+      ((pr.effective_price + (state.thresholds.td_rate_cents||0)) - state.battery_cost.avg_cost_cents_kwh).toFixed(1) + '\u00a2' : '\u2014',
+      (pr.effective_price != null && state.battery_cost && (pr.effective_price + (state.thresholds.td_rate_cents||0)) > state.battery_cost.avg_cost_cents_kwh) ? 'color:var(--green)' : 'color:var(--red)'],
     ['Solar', '\u2014', 'color:var(--dim)'],
   ];
   return rows.map(([l,v,s]) =>

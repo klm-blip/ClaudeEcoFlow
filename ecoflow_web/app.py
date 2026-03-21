@@ -396,7 +396,10 @@ def _on_telemetry_update():
                 battery_pool.initialize_from_soc(soc)
             _pool_initialized = True
 
-        battery_pool.update(bw, ep, soc)
+        # Battery pool uses total cost (supply + T&D) since that's the real
+        # cost of energy going into the battery
+        total_cost = ep + (thresholds.td_rate_cents or 0)
+        battery_pool.update(bw, total_cost, soc)
         energy_tracker.update(
             power_state.grid_w or 0.0,
             power_state.load_w or 0.0,
