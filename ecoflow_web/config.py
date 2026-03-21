@@ -24,9 +24,13 @@ COMED_FIXED_RATE   = 9.6   # cents/kWh (Price to Compare as of Jan 2026)
 COMED_5MIN_URL     = "https://hourlypricing.comed.com/api?type=5minutefeed"
 COMED_HOURAVG_URL  = "https://hourlypricing.comed.com/api?type=currenthouraverage"
 
-# ─── Paths ──────────────────────────────────────────────────────────────────
+# ─── Battery ──────────────────────────────────────────────────────────────
+BATTERY_CAPACITY_WH = 49152   # 8 × 6144 Wh (Delta Pro Ultra X × 8 batteries)
+
+# ─── Paths ────────────────────────────────────────────────────────────────
 _PROJECT_DIR    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 THRESHOLDS_FILE = os.path.join(_PROJECT_DIR, "ecoflow_thresholds.json")
+STATE_FILE      = os.path.join(_PROJECT_DIR, "ecoflow_state.json")
 CREDENTIALS_FILE = os.path.join(_PROJECT_DIR, "ecoflow_credentials.txt")
 
 # ─── Credential file loader ────────────────────────────────────────────────

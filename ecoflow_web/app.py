@@ -15,10 +15,10 @@ import os
 import threading
 import time
 
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, request
 from flask_sock import Sock
 
-from .config import COLORS
+from .config import COLORS, STATE_FILE
 from .state import PowerState, PriceState
 from .history import HistoryBuffer
 from .comed import ComedPoller
@@ -30,6 +30,8 @@ from .proto_codec import (
 )
 from . import logger
 from .notify import TelegramNotifier
+from .battery_cost import BatteryCostPool
+from .energy_tracker import EnergyTracker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("ecoflow")
@@ -42,10 +44,14 @@ thresholds   = AutoThresholds.load()
 auto         = AutoController()
 auto.enabled = True     # automation ON by default (production)
 
-commands_live = True    # LIVE commands by default (production)
-command_log   = []      # [{ts, live, text}, ...] last 30 entries
-mqtt_handler  = None    # set in main()
-notifier      = TelegramNotifier()
+commands_live   = True    # LIVE commands by default (production)
+command_log     = []      # [{ts, live, text}, ...] last 30 entries
+mqtt_handler    = None    # set in main()
+notifier        = TelegramNotifier()
+battery_pool    = BatteryCostPool()
+energy_tracker  = EnergyTracker()
+_state_lock     = threading.Lock()
+_pool_initialized = False  # set True after first SOC-based init
 
 # Load Telegram config from thresholds file if present
 try:
@@ -86,6 +92,40 @@ def static_files(filename):
     return send_from_directory(_static_dir, filename)
 
 
+# ─── Energy API ────────────────────────────────────────────────────────
+
+@app.route("/api/energy")
+def api_energy():
+    """Return hourly energy data for a given date."""
+    date_str = request.args.get("date", datetime.date.today().isoformat())
+    rows = EnergyTracker.read_day(date_str)
+    return json.dumps({"date": date_str, "hours": rows})
+
+
+@app.route("/api/energy/summary")
+def api_energy_summary():
+    """Return aggregated energy data for a period (day/week/month)."""
+    period = request.args.get("period", "day")
+    today = datetime.date.today()
+    if period == "week":
+        start = today - datetime.timedelta(days=today.weekday())
+    elif period == "month":
+        start = today.replace(day=1)
+    else:
+        start = today
+    data = EnergyTracker.summarize_period(start.isoformat(), today.isoformat())
+    data["period"] = period
+    data["start"] = start.isoformat()
+    data["end"] = today.isoformat()
+    return json.dumps(data)
+
+
+@app.route("/api/energy/dates")
+def api_energy_dates():
+    """Return list of dates with energy data."""
+    return json.dumps({"dates": EnergyTracker.available_dates()})
+
+
 # ─── WebSocket ──────────────────────────────────────────────────────────────
 
 def _build_state_msg():
@@ -105,7 +145,9 @@ def _build_state_msg():
         "commands_live":  commands_live,
         "command_log":    command_log[-30:],
         "mqtt_connected": mqtt_handler.is_alive if mqtt_handler else False,
-        "telegram": notifier.to_dict(),
+        "telegram":       notifier.to_dict(),
+        "battery_cost":   battery_pool.to_dict(),
+        "energy_hour":    energy_tracker.to_dict(),
     })
 
 
@@ -340,6 +382,27 @@ def _run_automation():
 
 def _on_telemetry_update():
     """Called from MQTT thread when new telemetry arrives."""
+    global _pool_initialized
+
+    # Update battery cost pool and energy tracker
+    ep = price_state.effective_price
+    bw = power_state.battery_w or 0.0
+    soc = power_state.soc_pct
+
+    if ep is not None:
+        # Initialize battery pool from SOC on first telemetry with valid SOC
+        if not _pool_initialized and soc is not None and soc > 0:
+            if battery_pool.total_wh < 1:
+                battery_pool.initialize_from_soc(soc)
+            _pool_initialized = True
+
+        battery_pool.update(bw, ep, soc)
+        energy_tracker.update(
+            power_state.grid_w or 0.0,
+            power_state.load_w or 0.0,
+            bw, ep,
+        )
+
     _broadcast()
     if auto.enabled:
         _run_automation()
@@ -359,13 +422,47 @@ def _on_price_update():
 
 # ─── Periodic tick (30s automation re-eval) ─────────────────────────────────
 
+def _save_runtime_state():
+    """Persist battery pool and energy tracker to JSON."""
+    state = {
+        "battery_pool": battery_pool.save_state(),
+        "energy_hour": energy_tracker.save_state(),
+    }
+    try:
+        with _state_lock:
+            with open(STATE_FILE, "w") as f:
+                json.dump(state, f, indent=2)
+    except Exception as e:
+        log.warning("Failed to save runtime state: %s", e)
+
+
+def _load_runtime_state():
+    """Restore battery pool and energy tracker from JSON."""
+    if not os.path.exists(STATE_FILE):
+        return
+    try:
+        with open(STATE_FILE) as f:
+            state = json.load(f)
+        battery_pool.load_state(state.get("battery_pool"))
+        energy_tracker.load_state(state.get("energy_hour"))
+    except Exception as e:
+        log.warning("Failed to load runtime state: %s", e)
+
+
+_tick_count = 0
+
 def _tick_loop():
-    """Independent 30s timer for automation re-evaluation."""
+    """Independent 30s timer for automation re-evaluation + state persistence."""
+    global _tick_count
     while True:
         time.sleep(30)
+        _tick_count += 1
         if auto.enabled:
             _run_automation()
             _broadcast()
+        # Save runtime state every ~60s (every 2 ticks)
+        if _tick_count % 2 == 0:
+            _save_runtime_state()
 
 
 # ─── Main ───────────────────────────────────────────────────────────────────
@@ -374,6 +471,9 @@ def main():
     global mqtt_handler
 
     log.info("Starting EcoFlow Web Dashboard...")
+
+    # Load persisted runtime state (battery pool, energy tracker)
+    _load_runtime_state()
 
     # Start MQTT
     mqtt_handler = MQTTHandler(power_state, history, _on_telemetry_update)

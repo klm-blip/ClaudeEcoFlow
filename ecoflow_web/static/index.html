@@ -174,6 +174,7 @@ button:active{transform:scale(0.97)}
   <button class="tab-btn active" onclick="switchTab('status')">Status</button>
   <button class="tab-btn" onclick="switchTab('controls')">Controls</button>
   <button class="tab-btn" onclick="switchTab('history')">History</button>
+  <button class="tab-btn" onclick="switchTab('energy')">Energy</button>
 </div>
 
 <!-- ═══ STATUS TAB (mobile) / always visible (desktop) ════════════════════ -->
@@ -192,6 +193,8 @@ button:active{transform:scale(0.97)}
     <div class="hero" id="batt-hero">--%</div>
     <div class="subtitle" id="batt-sub">—</div>
     <div class="detail" id="batt-detail">Delta Pro Ultra</div>
+    <div class="detail" id="batt-cost" style="color:var(--amber);font-size:0.7rem"></div>
+    <div class="detail" id="batt-efficiency" style="color:var(--dim);font-size:0.65rem"></div>
     <div class="soc-bar"><div class="fill" id="soc-fill"></div><div class="marker" id="soc-marker"></div></div>
   </div>
   <div class="pill" id="pill-power">
@@ -360,6 +363,16 @@ button:active{transform:scale(0.97)}
         <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('td_rate_cents',0.5)">+</button>
       </span>
     </div>
+
+    <!-- Soft glide -->
+    <div class="discharge-row" style="margin-top:4px">
+      <span>Soft glide</span>
+      <span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('glide_minutes',-1)">−</button>
+        <span class="adj-value" id="adj-glide_minutes" style="display:inline-block;min-width:50px">5m</span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('glide_minutes',1)">+</button>
+      </span>
+    </div>
   </div>
 
   <!-- Right: Mode / Charge / Readings -->
@@ -435,6 +448,41 @@ button:active{transform:scale(0.97)}
 </div>
 </div><!-- /tab-history -->
 
+<!-- ═══ ENERGY TAB ════════════════════════════════════════════════════════ -->
+<div id="tab-energy" class="tab-content">
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Current Hour</div>
+    <div id="energy-current" style="font-size:0.85rem;color:var(--text)">Waiting for data...</div>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="section-title" style="margin-bottom:0">Today's Energy</div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <button id="energy-prev" onclick="changeEnergyDate(-1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&lt;</button>
+        <input type="date" id="energy-date" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.75rem;font-family:var(--font-mono)" onchange="fetchEnergyDay(this.value)">
+        <button id="energy-next" onclick="changeEnergyDate(1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&gt;</button>
+      </div>
+    </div>
+    <div id="energy-table" style="overflow-x:auto"></div>
+    <div id="energy-day-summary" style="margin-top:8px;font-size:0.82rem;color:var(--dim)"></div>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Period Summaries</div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="energy-period-btn" onclick="fetchEnergySummary('day')" style="background:var(--blue);color:#fff;padding:4px 12px;font-size:0.78rem;border-radius:4px">Today</button>
+      <button class="energy-period-btn" onclick="fetchEnergySummary('week')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Week</button>
+      <button class="energy-period-btn" onclick="fetchEnergySummary('month')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Month</button>
+    </div>
+    <div id="energy-summary" style="font-size:0.82rem"></div>
+  </div>
+</div>
+</div><!-- /tab-energy -->
+
 <script>
 // ═══ WebSocket ═══════════════════════════════════════════════════════════
 let ws = null, state = null, reconnectTimer = null;
@@ -483,7 +531,7 @@ function adjThreshold(key, delta) {
     low_charge_below:[-5,15], mid_charge_below:[-5,10], high_charge_below:[-5,5],
     emergency_charge_below:[-5,30],
     low_rate:[600,12000], mid_rate:[600,12000], high_rate:[600,12000], rate_emergency:[600,12000],
-    td_rate_cents:[0,30]
+    td_rate_cents:[0,30], glide_minutes:[0,15]
   };
   if (clamps[key]) { val = Math.max(clamps[key][0], Math.min(clamps[key][1], val)); }
   // Round to avoid float drift
@@ -711,6 +759,26 @@ function render() {
     else bandName = 'Emergency';
   }
   document.getElementById('batt-detail').textContent = 'Delta Pro Ultra \u00b7 ' + bandName;
+
+  // Battery cost pool
+  const bc = state.battery_cost;
+  const bcEl = document.getElementById('batt-cost');
+  if (bc && bc.avg_cost_cents_kwh > 0) {
+    let costText = 'Batt cost: ' + bc.avg_cost_cents_kwh.toFixed(1) + '\u00a2/kWh';
+    if (bc.total_kwh > 0) costText += ' \u00b7 ' + bc.total_kwh.toFixed(1) + ' kWh';
+    if (bc.legacy_remaining_pct > 0) costText += ' (' + Math.round(bc.legacy_remaining_pct) + '% est)';
+    bcEl.textContent = costText;
+  } else {
+    bcEl.textContent = '';
+  }
+  // Efficiency
+  const effEl = document.getElementById('batt-efficiency');
+  if (bc && bc.efficiency_pct > 0) {
+    effEl.textContent = 'Charge efficiency: ~' + bc.efficiency_pct.toFixed(0) + '%';
+  } else {
+    effEl.textContent = '';
+  }
+
   // SOC bar
   if (soc != null) {
     const fill = document.getElementById('soc-fill');
@@ -795,6 +863,9 @@ function render() {
   // ─── Telegram ────────────────────────────────────────────────────
   renderTelegram(state.telegram);
 
+  // ─── Energy current hour ───────────────────────────────────────────
+  renderEnergyCurrentHour(state.energy_hour);
+
   // ─── History chart ─────────────────────────────────────────────────
   drawHistory();
 }
@@ -820,6 +891,10 @@ function buildReadings(p, pr) {
     ['L1 / L2', (p.volt_a != null ? p.volt_a.toFixed(1) : '--') + ' / ' + (p.volt_b != null ? p.volt_b.toFixed(1) : '--') + 'V', ''],
     ['Hour avg', pr.price_hour != null ? pr.price_hour.toFixed(1) + '\u00a2' : '\u2014', ''],
     ['Total cost', (pr.effective_price != null && state.thresholds.td_rate_cents > 0) ? (pr.effective_price + state.thresholds.td_rate_cents).toFixed(1) + '\u00a2' : '\u2014', ''],
+    ['Batt cost', state.battery_cost && state.battery_cost.avg_cost_cents_kwh > 0 ? state.battery_cost.avg_cost_cents_kwh.toFixed(1) + '\u00a2/kWh' : '\u2014', 'color:var(--amber)'],
+    ['Spread', (pr.effective_price != null && state.battery_cost && state.battery_cost.avg_cost_cents_kwh > 0) ?
+      (pr.effective_price - state.battery_cost.avg_cost_cents_kwh).toFixed(1) + '\u00a2' : '\u2014',
+      (pr.effective_price != null && state.battery_cost && pr.effective_price > state.battery_cost.avg_cost_cents_kwh) ? 'color:var(--green)' : 'color:var(--red)'],
     ['Solar', '\u2014', 'color:var(--dim)'],
   ];
   return rows.map(([l,v,s]) =>
@@ -945,6 +1020,7 @@ function updateThresholds(t, soc) {
   setAdj('rate_emergency', t.rate_emergency, 'W');
   setAdj('discharge_above', t.discharge_above.toFixed(1), 'c');
   setAdj('td_rate_cents', (t.td_rate_cents || 0).toFixed(1), 'c');
+  setAdj('glide_minutes', Math.round(t.glide_minutes || 0), 'm');
 
   // Sync max SOC slider with threshold value
   const sliderSoc = document.getElementById('slider-soc');
@@ -1123,6 +1199,125 @@ document.addEventListener('visibilitychange', () => {
       connect();
     }
   }
+});
+
+// ═══ Energy Tab ══════════════════════════════════════════════════════════
+function renderEnergyCurrentHour(eh) {
+  const el = document.getElementById('energy-current');
+  if (!el || !eh || eh.hour < 0) { if (el) el.textContent = 'Waiting for data...'; return; }
+  const h = eh.hour;
+  const hStr = (h % 12 || 12) + (h < 12 ? 'am' : 'pm');
+  el.innerHTML =
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">' +
+    '<div><div style="color:var(--dim);font-size:0.72rem">Grid</div><div style="font-weight:600">' + eh.grid_kwh.toFixed(2) + ' kWh</div></div>' +
+    '<div><div style="color:var(--dim);font-size:0.72rem">Home Load</div><div style="font-weight:600">' + eh.load_kwh.toFixed(2) + ' kWh</div></div>' +
+    '<div><div style="color:var(--dim);font-size:0.72rem">Cost</div><div style="font-weight:600;color:var(--amber)">' + eh.cost_cents.toFixed(1) + '\u00a2</div></div>' +
+    '<div><div style="color:var(--dim);font-size:0.72rem">Batt Charge</div><div style="font-weight:600;color:var(--charge-green)">' + eh.battery_charge_kwh.toFixed(2) + ' kWh</div></div>' +
+    '<div><div style="color:var(--dim);font-size:0.72rem">Batt Discharge</div><div style="font-weight:600;color:var(--discharge-amber)">' + eh.battery_discharge_kwh.toFixed(2) + ' kWh</div></div>' +
+    '<div><div style="color:var(--dim);font-size:0.72rem">Avg Price</div><div style="font-weight:600">' + eh.avg_price_cents.toFixed(1) + '\u00a2/kWh</div></div>' +
+    '</div>' +
+    '<div style="text-align:center;margin-top:6px;color:var(--dim);font-size:0.72rem">Hour ' + h + ' (' + hStr + ')</div>';
+}
+
+let _energyDate = new Date().toISOString().slice(0,10);
+
+function changeEnergyDate(delta) {
+  const d = new Date(_energyDate);
+  d.setDate(d.getDate() + delta);
+  _energyDate = d.toISOString().slice(0,10);
+  document.getElementById('energy-date').value = _energyDate;
+  fetchEnergyDay(_energyDate);
+}
+
+async function fetchEnergyDay(dateStr) {
+  if (!dateStr) return;
+  _energyDate = dateStr;
+  document.getElementById('energy-date').value = dateStr;
+  try {
+    const resp = await fetch('/api/energy?date=' + dateStr);
+    const data = await resp.json();
+    renderEnergyTable(data.hours, dateStr);
+  } catch(e) {
+    document.getElementById('energy-table').innerHTML = '<div style="color:var(--dim)">Failed to load</div>';
+  }
+}
+
+function renderEnergyTable(hours, dateStr) {
+  const el = document.getElementById('energy-table');
+  const sumEl = document.getElementById('energy-day-summary');
+  if (!hours || !hours.length) {
+    el.innerHTML = '<div style="color:var(--dim);font-size:0.82rem;padding:8px 0">No data for ' + dateStr + '</div>';
+    sumEl.textContent = '';
+    return;
+  }
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.75rem;font-variant-numeric:tabular-nums">';
+  html += '<thead><tr style="color:var(--dim);border-bottom:1px solid var(--border)">' +
+    '<th style="text-align:left;padding:4px">Hour</th>' +
+    '<th style="text-align:right;padding:4px">Grid</th>' +
+    '<th style="text-align:right;padding:4px">Load</th>' +
+    '<th style="text-align:right;padding:4px">Chg</th>' +
+    '<th style="text-align:right;padding:4px">Dis</th>' +
+    '<th style="text-align:right;padding:4px">Cost</th>' +
+    '<th style="text-align:right;padding:4px">Avg\u00a2</th>' +
+    '</tr></thead><tbody>';
+  let totalGrid=0, totalLoad=0, totalChg=0, totalDis=0, totalCost=0;
+  hours.forEach(r => {
+    const h = parseInt(r.hour);
+    const hStr = (h % 12 || 12) + (h < 12 ? 'a' : 'p');
+    const grid = parseFloat(r.grid_kwh||0), load = parseFloat(r.load_kwh||0);
+    const chg = parseFloat(r.battery_charge_kwh||0), dis = parseFloat(r.battery_discharge_kwh||0);
+    const cost = parseFloat(r.cost_cents||0), avg = parseFloat(r.avg_price_cents||0);
+    totalGrid+=grid; totalLoad+=load; totalChg+=chg; totalDis+=dis; totalCost+=cost;
+    html += '<tr style="border-bottom:1px solid var(--border)">' +
+      '<td style="padding:3px 4px">' + hStr + '</td>' +
+      '<td style="text-align:right;padding:3px 4px">' + grid.toFixed(2) + '</td>' +
+      '<td style="text-align:right;padding:3px 4px">' + load.toFixed(2) + '</td>' +
+      '<td style="text-align:right;padding:3px 4px;color:var(--charge-green)">' + chg.toFixed(2) + '</td>' +
+      '<td style="text-align:right;padding:3px 4px;color:var(--discharge-amber)">' + dis.toFixed(2) + '</td>' +
+      '<td style="text-align:right;padding:3px 4px;color:var(--amber)">' + cost.toFixed(1) + '\u00a2</td>' +
+      '<td style="text-align:right;padding:3px 4px">' + avg.toFixed(1) + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  el.innerHTML = html;
+  sumEl.innerHTML = 'Day total: Grid ' + totalGrid.toFixed(2) + ' kWh | Load ' + totalLoad.toFixed(2) +
+    ' kWh | Charge ' + totalChg.toFixed(2) + ' kWh | Discharge ' + totalDis.toFixed(2) +
+    ' kWh | <span style="color:var(--amber)">Cost ' + totalCost.toFixed(1) + '\u00a2 ($' + (totalCost/100).toFixed(2) + ')</span>';
+}
+
+async function fetchEnergySummary(period) {
+  // Highlight active button
+  document.querySelectorAll('.energy-period-btn').forEach(b => {
+    b.style.background = 'var(--panel2)'; b.style.color = 'var(--text)';
+    b.style.border = '1px solid var(--border)';
+  });
+  event.target.style.background = 'var(--blue)'; event.target.style.color = '#fff';
+  event.target.style.border = '1px solid var(--blue)';
+  try {
+    const resp = await fetch('/api/energy/summary?period=' + period);
+    const d = await resp.json();
+    const el = document.getElementById('energy-summary');
+    const labels = {day:'Today',week:'This Week',month:'This Month'};
+    el.innerHTML =
+      '<div style="font-weight:600;margin-bottom:4px">' + (labels[period]||period) + ' (' + d.start + ' to ' + d.end + ')</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">' +
+      '<div>Grid: <b>' + d.grid_kwh.toFixed(2) + '</b> kWh</div>' +
+      '<div>Load: <b>' + d.load_kwh.toFixed(2) + '</b> kWh</div>' +
+      '<div style="color:var(--amber)">Cost: <b>' + d.cost_cents.toFixed(1) + '\u00a2</b> ($' + (d.cost_cents/100).toFixed(2) + ')</div>' +
+      '<div style="color:var(--charge-green)">Charge: <b>' + d.battery_charge_kwh.toFixed(2) + '</b> kWh</div>' +
+      '<div style="color:var(--discharge-amber)">Discharge: <b>' + d.battery_discharge_kwh.toFixed(2) + '</b> kWh</div>' +
+      '<div>Avg price: <b>' + d.avg_price_cents.toFixed(1) + '\u00a2</b>/kWh</div>' +
+      '</div>' +
+      '<div style="color:var(--dim);font-size:0.72rem;margin-top:4px">' + d.hours + ' hours recorded</div>';
+  } catch(e) {
+    document.getElementById('energy-summary').innerHTML = '<div style="color:var(--dim)">Failed to load</div>';
+  }
+}
+
+// Initialize energy date picker
+document.addEventListener('DOMContentLoaded', () => {
+  const dp = document.getElementById('energy-date');
+  if (dp) { dp.value = _energyDate; fetchEnergyDay(_energyDate); }
 });
 
 // ═══ Clock + Init ════════════════════════════════════════════════════════

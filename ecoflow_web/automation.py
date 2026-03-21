@@ -2,6 +2,7 @@
 Automation: SOC-tiered charge/discharge controller with floor-based band model.
 """
 
+import datetime
 import json
 import logging
 import os
@@ -45,6 +46,8 @@ class AutoThresholds:
 
     td_rate_cents:      float = 8.5    # cents/kWh - transmission & distribution charge
 
+    glide_minutes:      float = 5.0    # minutes to sustain below discharge threshold before switching to backup
+
     def save(self):
         """Persist current thresholds to JSON file."""
         try:
@@ -84,6 +87,10 @@ class AutoController:
         self.last_cmd_ts          = 0.0
         self.last_decision        = "\u2014"
         self.manual_override_until = 0.0   # timestamp until which auto is paused
+
+        # Soft glide state — delay switching from Self-Powered to Backup
+        self._glide_start_ts      = 0.0    # when price first dropped below threshold
+        self._glide_last_hour     = -1     # track hour boundary resets
 
     def manual_mode_change(self, mode_int: int, override_minutes: int = None):
         """Call when the user manually changes mode via the UI.
@@ -142,9 +149,44 @@ class AutoController:
 
         # High price -> self-powered (discharge)
         if ep >= t.discharge_above:
+            self._glide_start_ts = 0.0   # reset glide — price is above threshold
             if soc is None or soc > t.low_floor:
                 return 2, 0, f"DISCHARGE: {ep:.1f}c [{src}] >= {t.discharge_above:.1f}c"
             return 1, 0, f"HOLD: price high but SOC {soc:.0f}% too low"
+
+        # ── Soft glide: delay discharge→backup transition ─────────────
+        # If we were discharging and price just dropped below threshold,
+        # keep discharging for glide_minutes to avoid premature switchback
+        # after price spikes. Resets at hour boundary (hourly avg resets).
+        if self.last_mode == 2 and t.glide_minutes > 0:
+            now_dt = datetime.datetime.now()
+            now_minute = now_dt.minute
+
+            # Hour boundary exception: at minute 0-1, skip glide
+            if now_minute <= 1:
+                self._glide_start_ts = 0.0
+                self._glide_last_hour = now_dt.hour
+            else:
+                # Check if hour changed mid-glide (reset)
+                if self._glide_last_hour != now_dt.hour:
+                    self._glide_start_ts = 0.0
+                    self._glide_last_hour = now_dt.hour
+
+                now_ts = time.time()
+                if self._glide_start_ts <= 0:
+                    self._glide_start_ts = now_ts
+
+                elapsed = now_ts - self._glide_start_ts
+                glide_secs = t.glide_minutes * 60
+                if elapsed < glide_secs:
+                    remaining = glide_secs - elapsed
+                    mins, secs_r = divmod(int(remaining), 60)
+                    return 2, 0, (
+                        f"SOFT GLIDE: {ep:.1f}c < {t.discharge_above:.1f}c "
+                        f"— {mins}m{secs_r:02d}s remaining"
+                    )
+                # Glide period expired — fall through to normal logic
+                self._glide_start_ts = 0.0
 
         # SOC-tiered charging decision (floor model)
         if soc is None:
