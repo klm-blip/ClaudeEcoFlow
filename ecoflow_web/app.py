@@ -18,13 +18,14 @@ import time
 from flask import Flask, send_from_directory, request
 from flask_sock import Sock
 
-from .config import COLORS, STATE_FILE, KIA_CREDENTIALS_FILE
-from .state import PowerState, PriceState, KiaState
+from .config import COLORS, STATE_FILE, KIA_CREDENTIALS_FILE, ENPHASE_CREDENTIALS_FILE
+from .state import PowerState, PriceState, KiaState, EnphaseState
 from .history import HistoryBuffer
 from .comed import ComedPoller
 from .automation import AutoThresholds, AutoController
 from .kia import KiaPoller
 from .kia_automation import KiaAutoController
+from .enphase import EnphasePoller
 from .mqtt_handler import MQTTHandler
 from .proto_codec import (
     build_mode_command, build_charge_command,
@@ -50,6 +51,9 @@ kia_state       = KiaState()
 kia_auto        = KiaAutoController()
 kia_auto.enabled = True   # EV automation ON by default (production)
 kia_poller      = None    # set in main() if credentials exist
+
+enphase_state   = EnphaseState()
+enphase_poller  = None    # set in main() if credentials exist
 
 commands_live   = True    # LIVE commands by default (production)
 command_log     = []      # [{ts, live, text}, ...] last 30 entries
@@ -155,6 +159,7 @@ def _build_state_msg():
         "telegram":       notifier.to_dict(),
         "battery_cost":   battery_pool.to_dict(),
         "energy_hour":    energy_tracker.to_dict(),
+        "enphase":        enphase_state.to_dict(),
         "kia":            kia_state.to_dict(),
         "kia_auto": {
             "enabled":       kia_auto.enabled,
@@ -481,6 +486,13 @@ def _on_kia_update():
         _run_kia_automation()
 
 
+# ─── Enphase callback ──────────────────────────────────────────────────────
+
+def _on_enphase_update():
+    """Called from Enphase poller thread when new solar data arrives."""
+    _broadcast()
+
+
 # ─── Callbacks ──────────────────────────────────────────────────────────────
 
 def _on_telemetry_update():
@@ -595,8 +607,15 @@ def main():
     comed.start()
     log.info("ComEd poller started")
 
+    # Start Enphase poller (if credentials exist)
+    if os.path.exists(ENPHASE_CREDENTIALS_FILE):
+        enphase_poller = EnphasePoller(enphase_state, _on_enphase_update)
+        enphase_poller.start()
+        log.info("Enphase poller started")
+    else:
+        log.info("Enphase credentials not found — solar features disabled")
+
     # Start Kia poller (if credentials exist)
-    import os
     if os.path.exists(KIA_CREDENTIALS_FILE):
         kia_poller = KiaPoller(kia_state, _on_kia_update)
         kia_poller.start()

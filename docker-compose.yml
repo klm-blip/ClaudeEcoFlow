@@ -14,6 +14,7 @@ services:
       - /home/pi/automation_data/logs:/app/logs
       - /home/pi/automation_data/kia_credentials.txt:/app/kia_credentials.txt:ro
       - /home/pi/automation_data/kia_token.json:/app/kia_token.json
+      - /home/pi/automation_data/enphase_credentials.txt:/app/enphase_credentials.txt:ro
     networks:
       - ecoflow-net
 

@@ -127,6 +127,40 @@ class KiaState:
         }
 
 
+@dataclass
+class EnphaseState:
+    production_w:    Optional[float] = None   # solar production watts
+    consumption_w:   Optional[float] = None   # total house consumption watts
+    net_grid_w:      Optional[float] = None   # + import, - export
+    today_production_wh: float = 0.0          # today's solar production Wh
+    today_consumption_wh: float = 0.0         # today's consumption Wh
+    last_update:     float = 0.0
+    error:           str = ""
+    available:       bool = False              # True if enphase_credentials.txt exists
+
+    @property
+    def stale(self):
+        return self.last_update > 0 and (time.time() - self.last_update) > 30
+
+    @property
+    def exporting(self):
+        return self.net_grid_w is not None and self.net_grid_w < -10
+
+    def to_dict(self):
+        return {
+            "production_w":       self.production_w,
+            "consumption_w":      self.consumption_w,
+            "net_grid_w":         self.net_grid_w,
+            "today_production_wh": self.today_production_wh,
+            "today_consumption_wh": self.today_consumption_wh,
+            "stale":              self.stale,
+            "exporting":          self.exporting,
+            "error":              self.error,
+            "available":          self.available,
+            "last_update":        self.last_update,
+        }
+
+
 def parse_payload(payload: bytes, state: PowerState) -> bool:
     """Parse MQTT telemetry protobuf into PowerState. Returns True if any field updated."""
     try:

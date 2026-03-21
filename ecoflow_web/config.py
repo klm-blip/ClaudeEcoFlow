@@ -30,6 +30,9 @@ BATTERY_CAPACITY_WH = 49152   # 8 × 6144 Wh (Delta Pro Ultra X × 8 batteries)
 # ─── Kia EV ──────────────────────────────────────────────────────────────
 KIA_POLL_SECONDS = 300   # 5 minutes (stay under 200 calls/day limit)
 
+# ─── Enphase Envoy ──────────────────────────────────────────────────────
+ENPHASE_POLL_SECONDS = 10   # local API is fast (~64ms), safe to poll frequently
+
 # ─── Paths ────────────────────────────────────────────────────────────────
 _PROJECT_DIR    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 THRESHOLDS_FILE = os.path.join(_PROJECT_DIR, "ecoflow_thresholds.json")
@@ -37,6 +40,7 @@ STATE_FILE      = os.path.join(_PROJECT_DIR, "ecoflow_state.json")
 CREDENTIALS_FILE = os.path.join(_PROJECT_DIR, "ecoflow_credentials.txt")
 KIA_CREDENTIALS_FILE = os.path.join(_PROJECT_DIR, "kia_credentials.txt")
 KIA_TOKEN_FILE       = os.path.join(_PROJECT_DIR, "kia_token.json")
+ENPHASE_CREDENTIALS_FILE = os.path.join(_PROJECT_DIR, "enphase_credentials.txt")
 
 # ─── Credential file loader ────────────────────────────────────────────────
 def _load_credentials():

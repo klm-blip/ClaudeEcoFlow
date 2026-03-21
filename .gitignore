@@ -4,6 +4,7 @@ ecoflow_thresholds.json
 kia_credentials.txt
 kia_token.json
 ecoflow_state.json
+enphase_credentials.txt
 
 # Reference repos (cloned external repos, not our code)
 references/
