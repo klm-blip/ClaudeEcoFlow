@@ -36,6 +36,8 @@ class TelegramNotifier:
             "charge_stop": False,
             "grid_outage": True,
             "price_spike": True,
+            "kia_charge_start": False,
+            "kia_charge_stop": False,
         }
 
     def configure(self, bot_token: str, chat_ids: list, events: dict = None):
