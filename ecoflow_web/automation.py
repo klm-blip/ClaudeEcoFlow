@@ -46,6 +46,7 @@ class AutoThresholds:
 
     td_rate_cents:      float = 8.5    # cents/kWh - transmission & distribution charge
 
+    soc_hysteresis:     float = 2.0    # % - deadband below ceiling before re-charging (prevents oscillation)
     glide_minutes:      float = 5.0    # minutes to sustain below discharge threshold before switching to backup
 
     # Kia EV charging thresholds
@@ -94,6 +95,9 @@ class AutoController:
         self.last_cmd_ts          = 0.0
         self.last_decision        = "\u2014"
         self.manual_override_until = 0.0   # timestamp until which auto is paused
+
+        # Hysteresis — track which ceiling SOC last hit to prevent charge oscillation
+        self._ceiling_hit         = None   # the SOC ceiling value that was reached
 
         # Soft glide state — delay switching from Self-Powered to Backup
         self._glide_start_ts      = 0.0    # when price first dropped below threshold
@@ -148,8 +152,11 @@ class AutoController:
         else:
             return None, None, "waiting for price data"
 
-        # Battery full
+        hyst = t.soc_hysteresis
+
+        # Battery full — set ceiling when SOC reaches max_soc
         if soc is not None and soc >= t.max_soc:
+            self._ceiling_hit = t.max_soc
             if ep >= t.discharge_above:
                 return 2, 0, f"DISCHARGE: full + {ep:.1f}c [{src}] >= {t.discharge_above:.1f}c"
             return 1, 0, f"HOLD: battery full ({soc:.0f}% >= {t.max_soc:.0f}%)"
@@ -157,6 +164,7 @@ class AutoController:
         # High price -> self-powered (discharge)
         if ep >= t.discharge_above:
             self._glide_start_ts = 0.0   # reset glide — price is above threshold
+            self._ceiling_hit = None     # discharging clears any ceiling
             if soc is None or soc > t.low_floor:
                 return 2, 0, f"DISCHARGE: {ep:.1f}c [{src}] >= {t.discharge_above:.1f}c"
             return 1, 0, f"HOLD: price high but SOC {soc:.0f}% too low"
@@ -200,6 +208,15 @@ class AutoController:
             if ep < t.mid_charge_below:
                 return 1, t.mid_rate, f"CHARGE: {ep:.1f}c [{src}] (no SOC, mid default)"
             return 1, 0, f"HOLD: {ep:.1f}c [{src}] (no SOC)"
+
+        # If we recently hit a ceiling and SOC hasn't dropped enough, suppress charging
+        if self._ceiling_hit is not None:
+            if soc >= (self._ceiling_hit - hyst):
+                # Still in deadband — don't charge, just hold
+                return 1, 0, f"HOLD: SOC {soc:.0f}% in deadband (hit {self._ceiling_hit:.0f}%, wait for {self._ceiling_hit - hyst:.0f}%)"
+            else:
+                # Dropped out of deadband — clear and resume normal logic
+                self._ceiling_hit = None
 
         if soc < t.low_floor:
             if ep < t.emergency_charge_below:
