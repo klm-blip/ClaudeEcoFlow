@@ -60,13 +60,18 @@ button:active{transform:scale(0.97)}
 .flow-chart-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px 10px}
 .price-chart-container{display:flex;flex-direction:column}
 .price-bar-chart{position:relative;padding-left:36px;padding-bottom:4px;flex:1;display:flex;flex-direction:column;justify-content:flex-end}
-.chart-area{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;height:120px;align-items:end}
-.chart-area .bar-wrap{display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end}
-.chart-area .bar{width:100%;border-radius:3px 3px 0 0;transition:height 0.3s;position:relative;min-height:2px}
-.chart-area .bar-val{position:absolute;top:-15px;left:50%;transform:translateX(-50%);font-size:0.6rem;color:var(--dim);white-space:nowrap}
+.chart-area{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;height:120px;position:relative}
+.chart-area .bar-wrap{position:relative;height:100%}
+.chart-area .bar{position:absolute;width:100%;transition:height 0.3s,bottom 0.3s,top 0.3s;min-height:2px}
+.chart-area .bar.pos{border-radius:3px 3px 0 0}
+.chart-area .bar.neg{border-radius:0 0 3px 3px}
+.chart-area .bar-val{position:absolute;left:50%;transform:translateX(-50%);font-size:0.6rem;color:var(--dim);white-space:nowrap}
+.chart-area .bar.pos .bar-val{top:-15px}
+.chart-area .bar.neg .bar-val{bottom:-15px}
+.chart-zero-line{position:absolute;left:0;right:0;height:2px;background:var(--dim);z-index:2;pointer-events:none}
 .chart-x-axis{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin-top:4px}
 .chart-x-axis span{text-align:center;font-size:0.6rem;color:var(--dim)}
-.chart-y-axis{position:absolute;left:0;top:0;height:120px;display:flex;flex-direction:column;justify-content:space-between;font-size:0.6rem;color:var(--dim);width:32px;text-align:right}
+.chart-y-axis{position:absolute;left:0;top:0;height:120px;font-size:0.6rem;color:var(--dim);width:32px;text-align:right}
 .chart-empty{display:flex;align-items:center;justify-content:center;height:120px;color:var(--dim);font-size:0.8rem}
 
 /* ─── Automation Strip ─────────────────────────────────────────────────── */
@@ -213,7 +218,9 @@ button:active{transform:scale(0.97)}
   <div class="price-bar-chart" id="price-bar-chart">
     <div class="chart-y-axis" id="chart-y-axis"></div>
     <div class="chart-empty" id="chart-empty">Waiting for data...</div>
-    <div class="chart-area" id="chart-bars" style="display:none"></div>
+    <div class="chart-area" id="chart-bars" style="display:none">
+      <div class="chart-zero-line" id="chart-zero-line"></div>
+    </div>
     <div class="chart-x-axis" id="chart-x-axis" style="display:none"></div>
   </div>
 </div>
@@ -700,9 +707,10 @@ function updateSliderLabel() {
 
 // ═══ 5-Min Price Bar Chart ════════════════════════════════════════════════
 function barColor(cents) {
-  if (cents < 8) return '#3fb950';       // green
-  if (cents <= 14) return '#f0a500';     // amber
-  return '#f85149';                       // red
+  if (cents < 0) return '#58a6ff';        // blue — negative/free money
+  if (cents < 8) return '#3fb950';        // green — cheap
+  if (cents <= 14) return '#f0a500';      // amber — moderate
+  return '#f85149';                        // red — expensive
 }
 
 function renderPriceBarChart(pr) {
@@ -710,6 +718,7 @@ function renderPriceBarChart(pr) {
   const xAxis  = document.getElementById('chart-x-axis');
   const yAxis  = document.getElementById('chart-y-axis');
   const empty  = document.getElementById('chart-empty');
+  const zeroLine = document.getElementById('chart-zero-line');
   if (!pr.history_5min || !pr.history_5min.length) {
     barsEl.style.display = 'none';
     xAxis.style.display  = 'none';
@@ -736,22 +745,49 @@ function renderPriceBarChart(pr) {
 
   const prices = currentHour.map(e => e[1]);
   const rawMax = Math.max(...prices);
-  const maxP = Math.max(rawMax, 14);   // at least 14 for scale
-  const minP = Math.min(0, ...prices); // allow negative
+  const rawMin = Math.min(...prices);
+  const maxP = Math.max(rawMax, 14);   // at least 14¢ for scale
+  // Always reserve at least 15% of chart height below zero line,
+  // and expand if negatives are deeper
+  const minNegReserve = -(maxP * 0.18);  // ~15% of positive range
+  const minP = Math.min(minNegReserve, rawMin * 1.1); // 10% padding on actual negatives
   const range = maxP - minP || 1;
 
-  // Y-axis labels — show smart ticks
+  // Zero line position: percentage from TOP of chart
+  const zeroPctFromTop = (maxP / range) * 100;
+  zeroLine.style.top = zeroPctFromTop + '%';
+
+  // Y-axis labels — position relative to chart zones
   yAxis.innerHTML = '';
   let ticks;
   if (maxP > 50) {
-    // Extreme spike: show max, a mid-point, and 0
-    ticks = [maxP, Math.round(maxP / 2), minP];
+    ticks = [maxP, Math.round(maxP / 2), 0];
   } else {
-    ticks = [maxP, (maxP + minP) / 2, minP];
+    ticks = [maxP, Math.round(maxP / 2), 0];
   }
+  // Add a negative tick if we have actual negative prices
+  if (rawMin < 0) ticks.push(Math.round(minP));
+
+  // Position ticks absolutely within y-axis
+  yAxis.style.position = 'absolute';
+  yAxis.style.left = '0';
+  yAxis.style.top = '0';
+  yAxis.style.height = '120px';
+  yAxis.style.display = 'flex';
+  yAxis.style.flexDirection = 'column';
+  yAxis.style.justifyContent = 'space-between';
+
+  // Clear and rebuild with positioned labels
+  yAxis.style.display = 'block';
+  yAxis.style.position = 'absolute';
   ticks.forEach(v => {
     const lbl = document.createElement('span');
     lbl.textContent = (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(0)) + '\u00a2';
+    lbl.style.position = 'absolute';
+    const pctFromTop = ((maxP - v) / range) * 100;
+    lbl.style.top = pctFromTop + '%';
+    lbl.style.transform = 'translateY(-50%)';
+    lbl.style.right = '2px';
     yAxis.appendChild(lbl);
   });
 
@@ -763,10 +799,9 @@ function renderPriceBarChart(pr) {
     dataBySlot[slot] = price;
   });
 
-  // Always render 12 slots (:00 through :55)
-  barsEl.innerHTML = '';
+  // Remove old bars (keep zero line)
+  Array.from(barsEl.children).forEach(c => { if (c !== zeroLine) barsEl.removeChild(c); });
   xAxis.innerHTML  = '';
-  const hourDt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours());
   for (let slot = 0; slot < 12; slot++) {
     const wrap = document.createElement('div');
     wrap.className = 'bar-wrap';
@@ -774,9 +809,18 @@ function renderPriceBarChart(pr) {
     if (dataBySlot[slot] !== undefined) {
       const price = dataBySlot[slot];
       const bar = document.createElement('div');
-      bar.className = 'bar';
-      const pct = Math.max(1, ((price - minP) / range) * 100);
-      bar.style.height = pct + '%';
+
+      if (price >= 0) {
+        bar.className = 'bar pos';
+        const barPct = Math.max(0.5, (price / range) * 100);
+        bar.style.height = barPct + '%';
+        bar.style.bottom = ((-minP / range) * 100) + '%';
+      } else {
+        bar.className = 'bar neg';
+        const barPct = Math.max(0.5, (Math.abs(price) / range) * 100);
+        bar.style.height = barPct + '%';
+        bar.style.top = zeroPctFromTop + '%';
+      }
       bar.style.background = barColor(price);
 
       const val = document.createElement('span');
@@ -785,7 +829,6 @@ function renderPriceBarChart(pr) {
       bar.appendChild(val);
       wrap.appendChild(bar);
     }
-    // Empty wrap for future slots (placeholder)
 
     barsEl.appendChild(wrap);
 
