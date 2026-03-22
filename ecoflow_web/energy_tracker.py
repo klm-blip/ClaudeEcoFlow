@@ -187,17 +187,40 @@ class EnergyTracker:
             log.info("Energy tracker: saved state is stale (hour %d/%s vs now %d/%s), starting fresh",
                      saved_hour, saved_date, now_dt.hour, now_dt.strftime("%Y-%m-%d"))
 
+    def flush_partial(self):
+        """Flush the current (incomplete) hour to CSV on shutdown.
+
+        This prevents data loss when the container is rebuilt mid-hour.
+        The next startup will overwrite this partial row if the hour
+        hasn't changed (same date+hour row gets appended, which is fine
+        since read_day returns all rows — the last one for a given hour
+        will have the most accumulated data).
+        """
+        if self.current_hour >= 0 and self.current_date:
+            self._flush_hour()
+            log.info("Energy tracker: flushed partial hour %d on shutdown",
+                     self.current_hour)
+
     # ── CSV reading for API ───────────────────────────────────────────────
 
     @staticmethod
     def read_day(date_str: str) -> list:
-        """Read energy CSV for a given date, return list of dicts."""
+        """Read energy CSV for a given date, return list of dicts.
+
+        Deduplicates by hour (keeps last row per hour) so that partial
+        flushes on shutdown don't create duplicate entries.
+        """
         path = os.path.join(_LOG_DIR, f"energy_{date_str}.csv")
         if not os.path.exists(path):
             return []
         try:
             with open(path, newline="") as f:
-                return list(csv.DictReader(f))
+                rows = list(csv.DictReader(f))
+            # Deduplicate: last row per hour wins (most data accumulated)
+            by_hour = {}
+            for r in rows:
+                by_hour[r.get("hour", "")] = r
+            return [by_hour[h] for h in sorted(by_hour.keys(), key=lambda x: int(x) if x.isdigit() else 0)]
         except Exception as e:
             log.warning("Failed to read energy CSV %s: %s", path, e)
             return []

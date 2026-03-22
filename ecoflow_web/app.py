@@ -730,8 +730,22 @@ def _tick_loop():
 
 # ─── Main ───────────────────────────────────────────────────────────────────
 
+def _shutdown():
+    """Graceful shutdown: flush partial data before exit."""
+    log.info("Shutdown signal received — flushing data...")
+    energy_tracker.flush_partial()
+    _save_runtime_state()
+    log.info("Shutdown complete.")
+
+
 def main():
     global mqtt_handler, kia_poller
+
+    # Register shutdown hook
+    import atexit
+    import signal
+    atexit.register(_shutdown)
+    signal.signal(signal.SIGTERM, lambda *_: (_shutdown(), exit(0)))
 
     log.info("Starting EcoFlow Web Dashboard...")
 
