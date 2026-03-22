@@ -122,7 +122,7 @@ def evaluate(state: dict) -> tuple[str, str]:
 
     # CHARGE: cheap energy
     if energy_price <= config.MAX_CHARGE_ENERGY_PRICE:
-        charge_cost_per_kwh = total_grid_cost / charge_eff
+        charge_cost_per_kwh = total_grid_cost / roundtrip_eff
         return "charge", (
             f"CHARGE: energy {energy_price:.1f}c <= {config.MAX_CHARGE_ENERGY_PRICE:.1f}c "
             f"(cost/kWh stored: {charge_cost_per_kwh:.1f}c) | SOC {soc:.0f}%"
