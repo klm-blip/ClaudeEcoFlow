@@ -1730,7 +1730,7 @@ function renderEnergyTable(hours, dateStr, arbiterHours) {
         const colors = {discharge:'var(--discharge-amber)',charge:'var(--charge-green)',backup:'var(--blue)',hold:'var(--dim)'};
         const dot = same ? '\ud83d\udfe2' : '\ud83d\udfe1';
         arbCell = '<td style="text-align:center;padding:3px 4px" title="' +
-          arb.reason.replace(/"/g,'&quot;') + '">' +
+          (arb.reason||'').replace(/"/g,'&quot;') + '">' +
           dot + '<span style="color:' + (colors[arbAction]||'var(--dim)') + '">' +
           (icons[arbAction]||'?') + '</span></td>';
       } else {
