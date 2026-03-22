@@ -137,6 +137,82 @@ def api_energy_dates():
     return json.dumps({"dates": EnergyTracker.available_dates()})
 
 
+# ─── Arbiter API ──────────────────────────────────────────────────────────
+
+@app.route("/api/state")
+def api_state():
+    """Full dashboard state for the Arbiter to read."""
+    return _build_state_msg()
+
+
+@app.route("/api/arbiter/action", methods=["POST"])
+def api_arbiter_action():
+    """Accept a command from the Arbiter.
+
+    Body JSON:
+        {"action": "discharge"}              → self-powered mode
+        {"action": "charge", "rate": 3000}   → backup + charge at rate
+        {"action": "backup"}                 → backup mode, stop charging
+        {"action": "hold"}                   → no-op, just log the reason
+        {"dry_run": true, ...}               → log only, don't execute
+
+    Optional: "reason": "..." for logging.
+    """
+    data = request.get_json(silent=True) or {}
+    action = data.get("action", "hold")
+    reason = data.get("reason", f"Arbiter: {action}")
+    dry_run = data.get("dry_run", False)
+
+    if dry_run:
+        _log_command(f"ARBITER [DRY]: {reason}")
+        return json.dumps({"ok": True, "executed": False, "reason": reason})
+
+    if action == "discharge":
+        p = build_and_wrap(build_mode_command(self_powered=True))
+        mqtt_handler.publish_command(p, commands_live)
+        auto.manual_mode_change(2, override_minutes=10)
+        _log_command(f"ARBITER: {reason}")
+        if commands_live:
+            ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
+            soc_str = f"{power_state.soc_pct:.0f}%" if power_state.soc_pct else "?"
+            notifier.notify("mode_self_powered",
+                f"⚡ <b>Arbiter → Self-Powered</b>\nPrice: {ep_str} | SOC: {soc_str}")
+
+    elif action == "charge":
+        rate = int(data.get("rate", 3000))
+        max_soc = int(data.get("max_soc", thresholds.max_soc))
+        p = build_and_wrap(build_mode_command(self_powered=False))
+        mqtt_handler.publish_command(p, commands_live)
+        p1 = build_and_wrap(build_charge_command(True))
+        mqtt_handler.publish_command(p1, commands_live)
+        p2 = build_and_wrap(build_charge_power_command(rate, max_soc))
+        mqtt_handler.publish_command(p2, commands_live)
+        auto.manual_mode_change(1, override_minutes=10)
+        _log_command(f"ARBITER: {reason}")
+        if commands_live:
+            ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
+            notifier.notify("charge_start",
+                f"🔋 <b>Arbiter → Charging</b> at {rate}W\nPrice: {ep_str}")
+
+    elif action == "backup":
+        p = build_and_wrap(build_mode_command(self_powered=False))
+        mqtt_handler.publish_command(p, commands_live)
+        p1 = build_and_wrap(build_charge_command(False))
+        mqtt_handler.publish_command(p1, commands_live)
+        auto.manual_mode_change(1, override_minutes=10)
+        _log_command(f"ARBITER: {reason}")
+
+    elif action == "hold":
+        _log_command(f"ARBITER [HOLD]: {reason}")
+        return json.dumps({"ok": True, "executed": False, "reason": reason})
+
+    else:
+        return json.dumps({"ok": False, "error": f"Unknown action: {action}"}), 400
+
+    _broadcast()
+    return json.dumps({"ok": True, "executed": True, "reason": reason})
+
+
 # ─── WebSocket ──────────────────────────────────────────────────────────────
 
 def _build_state_msg():

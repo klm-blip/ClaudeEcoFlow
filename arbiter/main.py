@@ -1,0 +1,187 @@
+"""The Arbiter — autonomous energy management brain.
+
+Runs as a standalone process. Polls the dashboard for state,
+evaluates profitability, and sends commands back via HTTP API.
+
+Usage:
+    python -m arbiter.main                      # dry-run (default)
+    ARBITER_DRY_RUN=false python -m arbiter.main  # live mode
+
+Environment variables (all optional, see config.py for defaults):
+    DASHBOARD_URL          http://localhost:5000
+    ARBITER_POLL_INTERVAL  30 (seconds)
+    ARBITER_DRY_RUN        true
+    TD_RATE                8.5
+    MAX_CHARGE_ENERGY_PRICE  4.0
+    SAFETY_MARGIN_CENTS      3.0
+    MIN_DISCHARGE_ENERGY_PRICE  3.0
+    SPIKE_OVERRIDE_TOTAL_PRICE  23.5
+"""
+
+import csv
+import datetime
+import json
+import logging
+import os
+import sys
+import time
+
+import requests
+
+from . import config
+from .profitability import evaluate
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [ARBITER] %(message)s",
+)
+log = logging.getLogger("arbiter")
+
+
+def _fetch_state() -> dict | None:
+    """Get full dashboard state via HTTP."""
+    try:
+        resp = requests.get(f"{config.DASHBOARD_URL}/api/state", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        log.warning("Failed to fetch state from dashboard: %s", e)
+        return None
+
+
+def _send_action(action: str, reason: str, rate: int = None, max_soc: int = None):
+    """Send a command to the dashboard."""
+    body = {
+        "action": action,
+        "reason": reason,
+        "dry_run": config.DRY_RUN,
+    }
+    if rate is not None:
+        body["rate"] = rate
+    if max_soc is not None:
+        body["max_soc"] = max_soc
+
+    try:
+        resp = requests.post(
+            f"{config.DASHBOARD_URL}/api/arbiter/action",
+            json=body,
+            timeout=10,
+        )
+        result = resp.json()
+        executed = result.get("executed", False)
+        tag = "EXECUTED" if executed else "DRY-RUN"
+        log.info("[%s] %s -> %s", tag, action, reason)
+        return result
+    except Exception as e:
+        log.warning("Failed to send action to dashboard: %s", e)
+        return None
+
+
+def _log_csv(state: dict, action: str, reason: str):
+    """Append decision to CSV log."""
+    os.makedirs(os.path.dirname(config.LOG_FILE) or ".", exist_ok=True)
+    now = datetime.datetime.now()
+    file_exists = os.path.exists(config.LOG_FILE)
+
+    price = state.get("price", {})
+    power = state.get("power", {})
+    battery = state.get("battery_cost", {})
+
+    row = {
+        "timestamp": now.isoformat(timespec="seconds"),
+        "energy_price": price.get("effective_price", ""),
+        "total_grid_cost": round((price.get("effective_price", 0) or 0) + config.TD_RATE, 1),
+        "soc_pct": power.get("soc_pct", ""),
+        "battery_avg_cost": battery.get("avg_cost_cents_kwh", ""),
+        "effective_battery_cost": battery.get("effective_cost_per_kwh", ""),
+        "charge_eff": battery.get("charge_efficiency_pct", ""),
+        "discharge_eff": battery.get("discharge_efficiency_pct", ""),
+        "roundtrip_eff": battery.get("roundtrip_efficiency_pct", ""),
+        "action": action,
+        "reason": reason,
+        "dry_run": config.DRY_RUN,
+    }
+
+    with open(config.LOG_FILE, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=row.keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+# ── State tracking to avoid spamming same command ─────────────────────────
+
+_last_action = None
+_last_action_ts = 0.0
+_MIN_REPEAT_INTERVAL = 120  # don't repeat same action within 2 minutes
+
+
+def _should_send(action: str) -> bool:
+    """Avoid sending the same action repeatedly."""
+    global _last_action, _last_action_ts
+
+    if action == "hold":
+        return True  # hold is always fine to log (no command sent)
+
+    if action == _last_action and (time.time() - _last_action_ts) < _MIN_REPEAT_INTERVAL:
+        return False  # same action too recently
+
+    return True
+
+
+def _record_action(action: str):
+    """Record that we sent an action."""
+    global _last_action, _last_action_ts
+    if action != "hold":
+        _last_action = action
+        _last_action_ts = time.time()
+
+
+# ── Main loop ──────────────────────────────────────────────────────────────
+
+def run():
+    mode_str = "DRY-RUN" if config.DRY_RUN else "LIVE"
+    log.info("=" * 60)
+    log.info("The Arbiter starting [%s]", mode_str)
+    log.info("Dashboard: %s", config.DASHBOARD_URL)
+    log.info("Poll interval: %ds", config.POLL_INTERVAL)
+    log.info("Charge cap: %.1fc energy | Safety margin: %.1fc", config.MAX_CHARGE_ENERGY_PRICE, config.SAFETY_MARGIN_CENTS)
+    log.info("Discharge floor: %.1fc energy | Spike override: %.1fc total", config.MIN_DISCHARGE_ENERGY_PRICE, config.SPIKE_OVERRIDE_TOTAL_PRICE)
+    log.info("T&D rate: %.1fc", config.TD_RATE)
+    log.info("=" * 60)
+
+    while True:
+        try:
+            state = _fetch_state()
+            if state is None:
+                log.warning("No state — dashboard unreachable, will retry in %ds", config.POLL_INTERVAL)
+                time.sleep(config.POLL_INTERVAL)
+                continue
+
+            action, reason = evaluate(state)
+
+            if _should_send(action):
+                # Determine charge rate from existing thresholds if charging
+                rate = None
+                if action == "charge":
+                    thresholds = state.get("thresholds", {})
+                    rate = int(thresholds.get("charge_rate", 3000))
+
+                _send_action(action, reason, rate=rate)
+                _record_action(action)
+            else:
+                log.debug("Suppressed repeat: %s", action)
+
+            _log_csv(state, action, reason)
+
+        except KeyboardInterrupt:
+            log.info("Shutting down.")
+            break
+        except Exception:
+            log.exception("Unexpected error in main loop")
+
+        time.sleep(config.POLL_INTERVAL)
+
+
+if __name__ == "__main__":
+    run()

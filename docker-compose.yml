@@ -18,6 +18,29 @@ services:
     networks:
       - ecoflow-net
 
+  arbiter:
+    build:
+      context: .
+      dockerfile: Dockerfile.arbiter
+    container_name: arbiter
+    restart: unless-stopped
+    environment:
+      - TZ=America/Chicago
+      - DASHBOARD_URL=http://ecoflow-dashboard:5000
+      - ARBITER_DRY_RUN=true
+      - ARBITER_POLL_INTERVAL=30
+      - TD_RATE=8.5
+      - MAX_CHARGE_ENERGY_PRICE=4.0
+      - SAFETY_MARGIN_CENTS=3.0
+      - MIN_DISCHARGE_ENERGY_PRICE=3.0
+      - SPIKE_OVERRIDE_TOTAL_PRICE=23.5
+    volumes:
+      - /home/pi/automation_data/logs:/app/logs
+    networks:
+      - ecoflow-net
+    depends_on:
+      - ecoflow-dashboard
+
 networks:
   ecoflow-net:
     driver: bridge
