@@ -31,17 +31,8 @@ def evaluate(state: dict) -> tuple[str, str]:
         return "hold", "No price data available"
 
     soc = power.get("soc_pct")
-    if soc is None or soc == 0:
-        # Try battery_cost total_kwh as a proxy — if battery has stored energy,
-        # SOC can't really be 0. This handles the case where telemetry hasn't
-        # delivered the SOC field yet but other data is available.
-        total_kwh = battery.get("total_kwh", 0)
-        if total_kwh and total_kwh > 0:
-            # Estimate SOC from pool data
-            capacity_kwh = battery.get("total_wh", 49152) / 1000.0 if battery.get("total_wh") else 49.152
-            soc = (total_kwh / capacity_kwh) * 100.0
-        else:
-            return "hold", f"No SOC data available (soc_pct={soc})"
+    if soc is None:
+        return "hold", "No SOC data (waiting for telemetry)"
 
     total_grid_cost = energy_price + config.TD_RATE  # full cost to buy from grid
 
