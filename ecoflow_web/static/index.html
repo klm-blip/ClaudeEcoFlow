@@ -898,8 +898,8 @@ function render() {
   // Battery cost pool
   const bc = state.battery_cost;
   const bcEl = document.getElementById('batt-cost');
-  if (bc && bc.avg_cost_cents_kwh > 0) {
-    let costText = 'Batt cost: ' + bc.avg_cost_cents_kwh.toFixed(1) + '\u00a2/kWh';
+  if (bc && bc.effective_cost_per_kwh > 0) {
+    let costText = 'Delivered cost: ' + bc.effective_cost_per_kwh.toFixed(1) + '\u00a2/kWh';
     if (bc.total_kwh > 0) costText += ' \u00b7 ' + bc.total_kwh.toFixed(1) + ' kWh';
     if (bc.legacy_remaining_pct > 0) costText += ' (' + Math.round(bc.legacy_remaining_pct) + '% est)';
     bcEl.textContent = costText;
@@ -1169,10 +1169,10 @@ function buildReadings(p, pr) {
     ['L1 / L2', (p.volt_a != null ? p.volt_a.toFixed(1) : '--') + ' / ' + (p.volt_b != null ? p.volt_b.toFixed(1) : '--') + 'V', ''],
     ['Hour avg', pr.price_hour != null ? pr.price_hour.toFixed(1) + '\u00a2' : '\u2014', ''],
     ['Total cost', (pr.effective_price != null && state.thresholds.td_rate_cents > 0) ? (pr.effective_price + state.thresholds.td_rate_cents).toFixed(1) + '\u00a2' : '\u2014', ''],
-    ['Batt cost', state.battery_cost && state.battery_cost.avg_cost_cents_kwh > 0 ? state.battery_cost.avg_cost_cents_kwh.toFixed(1) + '\u00a2/kWh' : '\u2014', 'color:var(--amber)'],
-    ['Spread', (pr.effective_price != null && state.battery_cost && state.battery_cost.avg_cost_cents_kwh > 0) ?
-      ((pr.effective_price + (state.thresholds.td_rate_cents||0)) - state.battery_cost.avg_cost_cents_kwh).toFixed(1) + '\u00a2' : '\u2014',
-      (pr.effective_price != null && state.battery_cost && (pr.effective_price + (state.thresholds.td_rate_cents||0)) > state.battery_cost.avg_cost_cents_kwh) ? 'color:var(--green)' : 'color:var(--red)'],
+    ['Batt \u2192 home', state.battery_cost && state.battery_cost.effective_cost_per_kwh > 0 ? state.battery_cost.effective_cost_per_kwh.toFixed(1) + '\u00a2/kWh' : '\u2014', 'color:var(--amber)'],
+    ['Spread', (pr.effective_price != null && state.battery_cost && state.battery_cost.effective_cost_per_kwh > 0) ?
+      ((pr.effective_price + (state.thresholds.td_rate_cents||0)) - state.battery_cost.effective_cost_per_kwh).toFixed(1) + '\u00a2' : '\u2014',
+      (pr.effective_price != null && state.battery_cost && (pr.effective_price + (state.thresholds.td_rate_cents||0)) > state.battery_cost.effective_cost_per_kwh) ? 'color:var(--green)' : 'color:var(--red)'],
     ['Solar', state.enphase && state.enphase.available && state.enphase.production_w != null ? fmt(state.enphase.production_w) : '\u2014',
       state.enphase && state.enphase.production_w > 10 ? 'color:var(--discharge-amber)' : 'color:var(--dim)'],
     ['Today Solar', state.enphase && state.enphase.today_production_wh > 0 ? (state.enphase.today_production_wh / 1000).toFixed(2) + ' kWh' : '\u2014', 'color:var(--discharge-amber)'],
