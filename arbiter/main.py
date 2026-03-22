@@ -12,10 +12,10 @@ Environment variables (all optional, see config.py for defaults):
     ARBITER_POLL_INTERVAL  30 (seconds)
     ARBITER_DRY_RUN        true
     TD_RATE                8.5
-    MAX_CHARGE_ENERGY_PRICE  4.0
-    SAFETY_MARGIN_CENTS      3.0
+    SAFETY_MARGIN_CENTS      2.0
     MIN_DISCHARGE_ENERGY_PRICE  3.0
-    SPIKE_OVERRIDE_TOTAL_PRICE  23.5
+    SPIKE_ENERGY_PRICE         15.0
+    TARGET_ENERGY_RATE         9.5
 """
 
 import csv
@@ -23,6 +23,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import sys
 import time
 
@@ -84,6 +85,12 @@ def _send_action(action: str, reason: str, rate: int = None, max_soc: int = None
         return None
 
 
+def _extract_charge_rate(reason: str) -> int | None:
+    """Extract charge rate from reason string like '... charge at 3000W'."""
+    m = re.search(r"(\d+)W", reason)
+    return int(m.group(1)) if m else None
+
+
 def _log_csv(state: dict, action: str, reason: str):
     """Append decision to CSV log."""
     os.makedirs(os.path.dirname(config.LOG_FILE) or ".", exist_ok=True)
@@ -93,6 +100,7 @@ def _log_csv(state: dict, action: str, reason: str):
     price = state.get("price", {})
     power = state.get("power", {})
     battery = state.get("battery_cost", {})
+    thresholds = state.get("thresholds", {})
 
     row = {
         "timestamp": now.isoformat(timespec="seconds"),
@@ -101,9 +109,7 @@ def _log_csv(state: dict, action: str, reason: str):
         "soc_pct": power.get("soc_pct", ""),
         "battery_avg_cost": battery.get("avg_cost_cents_kwh", ""),
         "effective_battery_cost": battery.get("effective_cost_per_kwh", ""),
-        "charge_eff": battery.get("charge_efficiency_pct", ""),
-        "discharge_eff": battery.get("discharge_efficiency_pct", ""),
-        "roundtrip_eff": battery.get("roundtrip_efficiency_pct", ""),
+        "outage_reserve": thresholds.get("outage_reserve_pct", 20),
         "action": action,
         "reason": reason,
         "dry_run": config.DRY_RUN,
@@ -152,9 +158,15 @@ def run():
     log.info("The Arbiter starting [%s]", mode_str)
     log.info("Dashboard: %s", config.DASHBOARD_URL)
     log.info("Poll interval: %ds", config.POLL_INTERVAL)
-    log.info("Charge cap: %.1fc energy | Safety margin: %.1fc", config.MAX_CHARGE_ENERGY_PRICE, config.SAFETY_MARGIN_CENTS)
-    log.info("Discharge floor: %.1fc energy | Spike override: %.1fc total", config.MIN_DISCHARGE_ENERGY_PRICE, config.SPIKE_OVERRIDE_TOTAL_PRICE)
-    log.info("T&D rate: %.1fc", config.TD_RATE)
+    log.info("Base margin: %.1f¢ | Discharge floor: %.1f¢ energy",
+             config.SAFETY_MARGIN_CENTS, config.MIN_DISCHARGE_ENERGY_PRICE)
+    log.info("Spike override: %.1f¢ energy | Target rate: %.1f¢ energy",
+             config.SPIKE_ENERGY_PRICE, config.TARGET_ENERGY_RATE)
+    log.info("T&D rate: %.1f¢", config.TD_RATE)
+    log.info("SOC willingness bands: %s", config.WILLINGNESS_SOC_BANDS)
+    log.info("Timing: evening %.1f¢, morning %.1f¢, overnight %+.1f¢",
+             config.TIMING_EVENING_PEAK, config.TIMING_MORNING_PEAK,
+             config.TIMING_OVERNIGHT_CHEAP)
     log.info("=" * 60)
 
     while True:
@@ -168,11 +180,8 @@ def run():
             action, reason = evaluate(state)
 
             if _should_send(action):
-                # Determine charge rate from existing thresholds if charging
-                rate = None
-                if action == "charge":
-                    thresholds = state.get("thresholds", {})
-                    rate = int(thresholds.get("charge_rate", 3000))
+                # Extract charge rate from reason if charging
+                rate = _extract_charge_rate(reason) if action == "charge" else None
 
                 _send_action(action, reason, rate=rate)
                 _record_action(action)

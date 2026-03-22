@@ -396,6 +396,52 @@ button:active{transform:scale(0.97)}
         <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('glide_minutes',1)">+</button>
       </span>
     </div>
+
+    <!-- Arbiter Settings -->
+    <div class="section-title" style="margin-top:10px">Arbiter Settings</div>
+
+    <!-- Outage Reserve slider -->
+    <div class="slider-group">
+      <label>Outage Reserve <span id="outage-reserve-val">20%</span></label>
+      <input type="range" id="slider-outage-reserve" min="10" max="80" step="5" value="20"
+             oninput="document.getElementById('outage-reserve-val').textContent=this.value+'%'"
+             onchange="send({cmd:'set_threshold',key:'outage_reserve_pct',value:parseInt(this.value)})">
+    </div>
+
+    <!-- Arbiter SOC Willingness Bands -->
+    <div style="font-size:0.73rem;color:var(--dim);margin-top:4px;margin-bottom:4px">Discharge willingness (SOC → extra spread needed):</div>
+    <div class="discharge-row" style="font-size:0.78rem">
+      <span>≥80% SOC</span>
+      <span>
+        <button class="adj-btn" style="width:24px;height:24px;font-size:0.75rem;display:inline-flex" onclick="adjWillingnessBand(0,-0.5)">−</button>
+        <span class="adj-value" id="adj-will-0" style="display:inline-block;min-width:40px;font-size:0.78rem">+0¢</span>
+        <button class="adj-btn" style="width:24px;height:24px;font-size:0.75rem;display:inline-flex" onclick="adjWillingnessBand(0,0.5)">+</button>
+      </span>
+    </div>
+    <div class="discharge-row" style="font-size:0.78rem">
+      <span>60-80% SOC</span>
+      <span>
+        <button class="adj-btn" style="width:24px;height:24px;font-size:0.75rem;display:inline-flex" onclick="adjWillingnessBand(1,-0.5)">−</button>
+        <span class="adj-value" id="adj-will-1" style="display:inline-block;min-width:40px;font-size:0.78rem">+1¢</span>
+        <button class="adj-btn" style="width:24px;height:24px;font-size:0.75rem;display:inline-flex" onclick="adjWillingnessBand(1,0.5)">+</button>
+      </span>
+    </div>
+    <div class="discharge-row" style="font-size:0.78rem">
+      <span>40-60% SOC</span>
+      <span>
+        <button class="adj-btn" style="width:24px;height:24px;font-size:0.75rem;display:inline-flex" onclick="adjWillingnessBand(2,-0.5)">−</button>
+        <span class="adj-value" id="adj-will-2" style="display:inline-block;min-width:40px;font-size:0.78rem">+3¢</span>
+        <button class="adj-btn" style="width:24px;height:24px;font-size:0.75rem;display:inline-flex" onclick="adjWillingnessBand(2,0.5)">+</button>
+      </span>
+    </div>
+    <div class="discharge-row" style="font-size:0.78rem">
+      <span>&lt;40% SOC</span>
+      <span>
+        <button class="adj-btn" style="width:24px;height:24px;font-size:0.75rem;display:inline-flex" onclick="adjWillingnessBand(3,-0.5)">−</button>
+        <span class="adj-value" id="adj-will-3" style="display:inline-block;min-width:40px;font-size:0.78rem">+8¢</span>
+        <button class="adj-btn" style="width:24px;height:24px;font-size:0.75rem;display:inline-flex" onclick="adjWillingnessBand(3,0.5)">+</button>
+      </span>
+    </div>
   </div>
 
   <!-- Right: Mode / Charge / Readings -->
@@ -578,6 +624,12 @@ button:active{transform:scale(0.97)}
 </div>
 <div class="chart-section">
   <div class="chart-card">
+    <div class="section-title">Arbiter vs Manual Comparison</div>
+    <div id="arbiter-comparison" style="font-size:0.82rem;color:var(--dim)">Collecting data...</div>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
     <div class="section-title">Period Summaries</div>
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <button class="energy-period-btn" onclick="fetchEnergySummary('day')" style="background:var(--blue);color:#fff;padding:4px 12px;font-size:0.78rem;border-radius:4px">Today</button>
@@ -670,7 +722,7 @@ function adjThreshold(key, delta) {
     low_charge_below:[-5,15], mid_charge_below:[-5,10], high_charge_below:[-5,5],
     emergency_charge_below:[-5,30],
     low_rate:[600,12000], mid_rate:[600,12000], high_rate:[600,12000], rate_emergency:[600,12000],
-    td_rate_cents:[0,30], glide_minutes:[0,15],
+    td_rate_cents:[0,30], glide_minutes:[0,15], outage_reserve_pct:[10,80],
     kia_soak_below:[-5,10], kia_normal_below:[0,20],
     kia_ac_limit_soak:[50,100], kia_ac_limit_normal:[50,100]
   };
@@ -678,6 +730,16 @@ function adjThreshold(key, delta) {
   // Round to avoid float drift
   val = Math.round(val * 10) / 10;
   send({cmd:'set_threshold', key, value: val});
+}
+
+// ═══ Arbiter Willingness Bands ═══════════════════════════════════════════
+function adjWillingnessBand(index, delta) {
+  if (!state) return;
+  // Default bands: [[80,0],[60,1],[40,3],[0,8]]
+  let bands = state.thresholds.arbiter_willingness_soc_bands || [[80,0],[60,1],[40,3],[0,8]];
+  bands = bands.map(b => [...b]); // clone
+  bands[index][1] = Math.max(0, Math.min(15, Math.round((bands[index][1] + delta) * 10) / 10));
+  send({cmd:'set_threshold', key:'arbiter_willingness_soc_bands', value: bands});
 }
 
 // ═══ Tab Switching ═══════════════════════════════════════════════════════
@@ -1371,6 +1433,20 @@ function updateThresholds(t, soc) {
   setAdj('td_rate_cents', (t.td_rate_cents || 0).toFixed(1), 'c');
   setAdj('glide_minutes', Math.round(t.glide_minutes || 0), 'm');
 
+  // Outage reserve slider
+  const orSlider = document.getElementById('slider-outage-reserve');
+  if (orSlider && t.outage_reserve_pct != null) {
+    orSlider.value = t.outage_reserve_pct;
+    document.getElementById('outage-reserve-val').textContent = t.outage_reserve_pct + '%';
+  }
+
+  // Arbiter willingness bands
+  const wBands = t.arbiter_willingness_soc_bands || [[80,0],[60,1],[40,3],[0,8]];
+  for (let i = 0; i < wBands.length; i++) {
+    const el = document.getElementById('adj-will-' + i);
+    if (el) el.textContent = '+' + wBands[i][1] + '¢';
+  }
+
   // Sync max SOC slider with threshold value
   const sliderSoc = document.getElementById('slider-soc');
   if (sliderSoc && t.max_soc != null) {
@@ -1677,12 +1753,126 @@ function renderEnergyTable(hours, dateStr, arbiterHours) {
   let summary = 'Day total: Grid ' + totalGrid.toFixed(2) + ' kWh | Load ' + totalLoad.toFixed(2) +
     ' kWh | Charge ' + totalChg.toFixed(2) + ' kWh | Discharge ' + totalDis.toFixed(2) +
     ' kWh | <span style="color:var(--amber)">Cost ' + totalCost.toFixed(1) + '\u00a2 ($' + (totalCost/100).toFixed(2) + ')</span>';
+  // Flat-rate benchmark
+  const flatRate = 9.5 + 8.5; // 18¢ total
+  const flatCost = totalGrid * flatRate;
+  if (totalGrid > 0) {
+    const avgActual = totalCost / totalGrid;
+    summary += '<br>Avg grid cost: <b>' + avgActual.toFixed(1) + '\u00a2</b>/kWh vs flat rate <b>' +
+      flatRate.toFixed(1) + '\u00a2</b>/kWh';
+    const savings = flatCost - totalCost;
+    if (savings > 0) {
+      summary += ' — <span style="color:var(--green)">saving ' + savings.toFixed(1) + '\u00a2 ($' + (savings/100).toFixed(2) + ')</span>';
+    } else {
+      summary += ' — <span style="color:var(--red)">over by ' + Math.abs(savings).toFixed(1) + '\u00a2</span>';
+    }
+  }
   if (hasArbiter && (agree + disagree) > 0) {
     summary += '<br><span style="color:var(--purple)">\ud83e\udde0 Arbiter agreement: ' +
       agree + '/' + (agree+disagree) + ' hours (' + Math.round(agree/(agree+disagree)*100) + '%)</span>' +
       ' \u2014 <span style="color:var(--dim)">\ud83d\udfe2 = agree, \ud83d\udfe1 = different</span>';
   }
   sumEl.innerHTML = summary;
+
+  // Arbiter comparison section
+  renderArbiterComparison(hours, arbiterHours, totalCost, totalGrid, totalLoad);
+}
+
+function renderArbiterComparison(hours, arbiterHours, actualCost, totalGrid, totalLoad) {
+  const el = document.getElementById('arbiter-comparison');
+  if (!hours || !hours.length) { el.innerHTML = '<span style="color:var(--dim)">No data yet</span>'; return; }
+  const hasArbiter = Object.keys(arbiterHours).length > 0;
+
+  // For each hour: compare what actually happened vs what Arbiter wanted
+  // "Missed savings" = hours where Arbiter said discharge but manual didn't,
+  //   times the price difference (grid_price - battery_cost)
+  // "Avoided loss" = hours where Arbiter said hold/backup but manual discharged at low spread
+  const tdRate = (state && state.thresholds && state.thresholds.td_rate_cents) || 8.5;
+  const battCost = (state && state.battery_cost && state.battery_cost.effective_cost_per_kwh) || 13;
+
+  let missedSavings = 0, missedHours = 0;
+  let avoidedLoss = 0, avoidedHours = 0;
+  let arbiterDischargeHours = 0, manualDischargeHours = 0;
+
+  hours.forEach(r => {
+    const h = parseInt(r.hour);
+    const dis = parseFloat(r.battery_discharge_kwh || 0);
+    const chg = parseFloat(r.battery_charge_kwh || 0);
+    const load = parseFloat(r.load_kwh || 0);
+    const avgPrice = parseFloat(r.avg_price_cents || 0); // energy-only avg for hour
+    const totalPrice = avgPrice + tdRate;
+
+    const arb = arbiterHours[String(h)];
+    if (!arb) return;
+
+    let dashAction = 'hold';
+    if (dis > 0.05) dashAction = 'discharge';
+    else if (chg > 0.05) dashAction = 'charge';
+
+    const arbAction = arb.action;
+
+    if (dashAction === 'discharge') manualDischargeHours++;
+    if (arbAction === 'discharge') arbiterDischargeHours++;
+
+    // Arbiter wanted to discharge, manual didn't → missed savings
+    if (arbAction === 'discharge' && dashAction !== 'discharge') {
+      const potentialSaving = (totalPrice - battCost) * (load || 1);
+      if (potentialSaving > 0) {
+        missedSavings += potentialSaving;
+        missedHours++;
+      }
+    }
+
+    // Arbiter said hold/backup, manual discharged → potential avoided loss
+    if (arbAction !== 'discharge' && dashAction === 'discharge') {
+      const spread = totalPrice - battCost;
+      if (spread < 2) { // discharged at thin/negative spread
+        avoidedLoss += Math.abs(spread) * dis;
+        avoidedHours++;
+      }
+    }
+  });
+
+  let html = '';
+  if (!hasArbiter) {
+    html = '<span style="color:var(--dim)">Arbiter data not available for this date</span>';
+  } else {
+    html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    html += '<div style="padding:6px;background:var(--panel2);border-radius:6px">';
+    html += '<div style="font-size:0.72rem;color:var(--dim)">Manual discharge hours</div>';
+    html += '<div style="font-size:1.1rem;font-weight:600">' + manualDischargeHours + '</div>';
+    html += '</div>';
+    html += '<div style="padding:6px;background:var(--panel2);border-radius:6px">';
+    html += '<div style="font-size:0.72rem;color:var(--dim)">Arbiter would discharge</div>';
+    html += '<div style="font-size:1.1rem;font-weight:600;color:var(--purple)">' + arbiterDischargeHours + '</div>';
+    html += '</div>';
+
+    if (missedHours > 0) {
+      html += '<div style="padding:6px;background:var(--panel2);border-radius:6px">';
+      html += '<div style="font-size:0.72rem;color:var(--dim)">Missed savings</div>';
+      html += '<div style="font-size:1.1rem;font-weight:600;color:var(--amber)">' +
+        missedSavings.toFixed(1) + '\u00a2 <span style="font-size:0.72rem;font-weight:400">(' +
+        missedHours + ' hrs)</span></div>';
+      html += '</div>';
+    }
+
+    if (avoidedHours > 0) {
+      html += '<div style="padding:6px;background:var(--panel2);border-radius:6px">';
+      html += '<div style="font-size:0.72rem;color:var(--dim)">Would avoid loss</div>';
+      html += '<div style="font-size:1.1rem;font-weight:600;color:var(--green)">' +
+        avoidedLoss.toFixed(1) + '\u00a2 <span style="font-size:0.72rem;font-weight:400">(' +
+        avoidedHours + ' hrs)</span></div>';
+      html += '</div>';
+    }
+
+    if (missedHours === 0 && avoidedHours === 0) {
+      html += '<div style="padding:6px;background:var(--panel2);border-radius:6px;grid-column:1/3">';
+      html += '<div style="color:var(--green);font-weight:600">Manual and Arbiter aligned — no missed opportunities</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  el.innerHTML = html;
 }
 
 async function fetchEnergySummary(period) {

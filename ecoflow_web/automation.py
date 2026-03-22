@@ -49,6 +49,14 @@ class AutoThresholds:
     soc_hysteresis:     float = 2.0    # % - deadband below ceiling before re-charging (prevents oscillation)
     glide_minutes:      float = 5.0    # minutes to sustain below discharge threshold before switching to backup
 
+    # Outage reserve — Arbiter never discharges below this SOC %
+    outage_reserve_pct: float = 20.0
+
+    # Arbiter discharge willingness — SOC penalty bands
+    # List of [soc_floor_pct, penalty_cents] — if SOC >= floor, apply this penalty
+    # Default: >=80% +0¢, 60-80% +1¢, 40-60% +3¢, <40% +8¢
+    arbiter_willingness_soc_bands: list = None  # None = use arbiter defaults
+
     # Kia EV charging thresholds
     kia_soak_below:      float = 1.0    # cents — charge to 100% below this price
     kia_normal_below:    float = 6.0    # cents — charge to normal limit below this; stop above
@@ -74,7 +82,11 @@ class AutoThresholds:
                     saved = json.load(f)
                 for k, v in saved.items():
                     if hasattr(t, k):
-                        setattr(t, k, type(getattr(t, k))(v))
+                        current = getattr(t, k)
+                        if current is None or isinstance(v, (list, dict, type(None))):
+                            setattr(t, k, v)  # lists, dicts, None: keep as-is
+                        else:
+                            setattr(t, k, type(current)(v))
                 log.info("Loaded thresholds from %s", THRESHOLDS_FILE)
             except Exception as e:
                 log.warning("Failed to load thresholds: %s", e)

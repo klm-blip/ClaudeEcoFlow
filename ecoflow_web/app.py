@@ -394,8 +394,11 @@ def _handle_command(data: dict):
         key = data.get("key")
         val = data.get("value")
         if key and val is not None and hasattr(thresholds, key):
-            field_type = type(getattr(thresholds, key))
-            setattr(thresholds, key, field_type(val))
+            current = getattr(thresholds, key)
+            if current is None or isinstance(val, (list, dict)):
+                setattr(thresholds, key, val)
+            else:
+                setattr(thresholds, key, type(current)(val))
             # Link max_soc ↔ high band ceiling: they are the same concept
             # (high band charges up to max_soc). Keep slider-soc in sync too.
             if key == "max_soc":
