@@ -38,20 +38,16 @@ def evaluate(state: dict) -> tuple[str, str]:
 
     # Battery cost data
     avg_cost = battery.get("avg_cost_cents_kwh", 0)  # includes T&D from charge tracking
-    charge_eff_pct = battery.get("charge_efficiency_pct", 0)
-    discharge_eff_pct = battery.get("discharge_efficiency_pct", 0)
-    effective_cost = battery.get("effective_cost_per_kwh", 0)  # already accounts for both efficiencies
+    effective_cost = battery.get("effective_cost_per_kwh", 0)  # uses assumed 81% roundtrip
 
-    # Use measured efficiencies if available, otherwise conservative defaults
-    charge_eff = (charge_eff_pct / 100.0) if charge_eff_pct > 0 else config.DEFAULT_CHARGE_EFFICIENCY
-    discharge_eff = (discharge_eff_pct / 100.0) if discharge_eff_pct > 0 else config.DEFAULT_DISCHARGE_EFFICIENCY
-    roundtrip_eff = charge_eff * discharge_eff
+    # Use hardwired roundtrip efficiency (matches dashboard's assumption)
+    roundtrip_eff = config.DEFAULT_CHARGE_EFFICIENCY * config.DEFAULT_DISCHARGE_EFFICIENCY
 
     # Effective battery cost per usable kWh delivered to home
     if effective_cost > 0:
-        eff_battery_cost = effective_cost  # dashboard already computed this
+        eff_battery_cost = effective_cost  # dashboard already computed this with 81% RT
     elif avg_cost > 0:
-        eff_battery_cost = avg_cost / discharge_eff  # compute it ourselves
+        eff_battery_cost = avg_cost / roundtrip_eff  # compute it ourselves
     else:
         eff_battery_cost = 0  # no data yet, can't evaluate
 

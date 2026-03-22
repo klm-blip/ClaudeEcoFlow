@@ -906,19 +906,26 @@ function render() {
   } else {
     bcEl.textContent = '';
   }
-  // Efficiency — show charge, discharge, and roundtrip
+  // Efficiency — show assumed RT used in calcs + measured values (informational)
   const effEl = document.getElementById('batt-efficiency');
   if (bc) {
-    let parts = [];
-    if (bc.charge_efficiency_pct > 0)
-      parts.push('AC→DC ' + bc.charge_efficiency_pct.toFixed(0) + '%');
-    if (bc.discharge_efficiency_pct > 0)
-      parts.push('DC→AC ' + bc.discharge_efficiency_pct.toFixed(0) + '%');
-    if (bc.roundtrip_efficiency_pct > 0)
-      parts.push('RT ' + bc.roundtrip_efficiency_pct.toFixed(0) + '%');
+    let line1 = 'RT ' + (bc.assumed_roundtrip_pct||81) + '% (assumed)';
     if (bc.effective_cost_per_kwh > 0)
-      parts.push('eff cost ' + bc.effective_cost_per_kwh.toFixed(1) + '¢');
-    effEl.textContent = parts.length ? parts.join(' · ') : '';
+      line1 += ' · eff cost ' + bc.effective_cost_per_kwh.toFixed(1) + '\u00a2';
+    let line2parts = [];
+    if (bc.measured_charge_eff > 0)
+      line2parts.push('AC\u2192DC ' + bc.measured_charge_eff.toFixed(0) + '%');
+    if (bc.measured_discharge_eff > 0)
+      line2parts.push('DC\u2192AC ' + bc.measured_discharge_eff.toFixed(0) + '%');
+    if (bc.measured_roundtrip_eff > 0)
+      line2parts.push('RT ' + bc.measured_roundtrip_eff.toFixed(0) + '%');
+    let text = line1;
+    if (line2parts.length)
+      text += '\nMeasured: ' + line2parts.join(' · ');
+    else
+      text += '\nMeasured: collecting data\u2026';
+    effEl.style.whiteSpace = 'pre-line';
+    effEl.textContent = text;
   } else {
     effEl.textContent = '';
   }

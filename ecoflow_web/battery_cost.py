@@ -247,39 +247,57 @@ class BatteryCostPool:
 
     @property
     def roundtrip_efficiency_pct(self) -> float:
-        """Combined AC→DC→AC roundtrip efficiency using sane-bounded values.
-        Returns default 81% (0.9×0.9) if no reliable data yet."""
-        return self._sane_charge_efficiency() * self._sane_discharge_efficiency() * 100.0
+        """Assumed roundtrip efficiency used in cost calculations (always 81%)."""
+        return self.ASSUMED_ROUNDTRIP_EFF * 100.0
+
+    # ── Efficiency assumptions ──────────────────────────────────────────
+
+    # Hardwired efficiency assumptions used in ALL cost calculations.
+    # These stay fixed until we have weeks of measured data to validate.
+    # Measured values are tracked and displayed but NOT used in calcs yet.
+    ASSUMED_CHARGE_EFF = 0.90      # AC→DC: 90%
+    ASSUMED_DISCHARGE_EFF = 0.90   # DC→AC: 90%
+    ASSUMED_ROUNDTRIP_EFF = 0.81   # 90% × 90%
 
     @property
     def effective_cost_per_kwh(self) -> float:
-        """True cost per usable kWh delivered to home, accounting for
-        both charge and discharge conversion losses.
-        Falls back to conservative 90% discharge efficiency if not yet
-        measured or if measured value is outside sane range (70-100%)."""
+        """True cost per usable kWh delivered to home via battery path.
+
+        Uses hardwired roundtrip efficiency (81% = 90% × 90%) until
+        measured values are validated over weeks of data.
+
+        The full path:
+          Grid → [charge loss 10%] → Battery → [discharge loss 10%] → Home
+          1 usable AC kWh requires 1/0.81 = 1.235 AC kWh from grid
+          Cost = avg_charge_price × 1.235
+        """
         avg = self.avg_cost_cents_kwh
         if avg <= 0:
             return 0.0
-        # avg_cost already reflects charge-side losses (we tracked grid Wh in)
-        # but NOT discharge-side losses — divide by discharge efficiency
-        disch_eff = self._sane_discharge_efficiency()
-        return avg / disch_eff
+        return avg / self.ASSUMED_ROUNDTRIP_EFF
 
-    def _sane_discharge_efficiency(self) -> float:
-        """Return discharge efficiency as a fraction, with sanity bounds.
-        Uses conservative 0.90 default if measured value is missing or
-        outside the plausible range of 70-100%."""
-        if (self.discharge_efficiency_pct > 0
-                and 70.0 <= self.discharge_efficiency_pct <= 100.0):
-            return self.discharge_efficiency_pct / 100.0
-        return 0.90  # conservative default
+    @property
+    def measured_charge_eff(self) -> float:
+        """Measured charge efficiency (informational only, not used in calcs yet)."""
+        if self.charge_efficiency_pct > 0 and 50.0 <= self.charge_efficiency_pct <= 105.0:
+            return self.charge_efficiency_pct
+        return 0.0  # not enough data
 
-    def _sane_charge_efficiency(self) -> float:
-        """Return charge efficiency as a fraction, with sanity bounds."""
-        if (self.charge_efficiency_pct > 0
-                and 70.0 <= self.charge_efficiency_pct <= 100.0):
-            return self.charge_efficiency_pct / 100.0
-        return 0.90  # conservative default
+    @property
+    def measured_discharge_eff(self) -> float:
+        """Measured discharge efficiency (informational only, not used in calcs yet)."""
+        if self.discharge_efficiency_pct > 0 and 50.0 <= self.discharge_efficiency_pct <= 105.0:
+            return self.discharge_efficiency_pct
+        return 0.0  # not enough data
+
+    @property
+    def measured_roundtrip_eff(self) -> float:
+        """Measured roundtrip efficiency (informational only)."""
+        c = self.measured_charge_eff
+        d = self.measured_discharge_eff
+        if c > 0 and d > 0:
+            return (c / 100.0) * (d / 100.0) * 100.0
+        return 0.0
 
     # ── Init from SOC ─────────────────────────────────────────────────────
 
@@ -305,11 +323,18 @@ class BatteryCostPool:
             "total_kwh": round(self.total_wh / 1000.0, 2),
             "avg_cost_cents_kwh": round(self.avg_cost_cents_kwh, 1),
             "legacy_remaining_pct": round(self.legacy_remaining_pct, 1),
-            "efficiency_pct": round(self.charge_efficiency_pct, 1),  # legacy compat
+            # Assumed values (used in cost calculations)
+            "assumed_roundtrip_pct": round(self.ASSUMED_ROUNDTRIP_EFF * 100, 0),
+            "effective_cost_per_kwh": round(self.effective_cost_per_kwh, 1),
+            # Measured values (informational — not used in calcs yet)
+            "measured_charge_eff": round(self.measured_charge_eff, 1),
+            "measured_discharge_eff": round(self.measured_discharge_eff, 1),
+            "measured_roundtrip_eff": round(self.measured_roundtrip_eff, 1),
+            # Raw values for backward compat
+            "efficiency_pct": round(self.charge_efficiency_pct, 1),
             "charge_efficiency_pct": round(self.charge_efficiency_pct, 1),
             "discharge_efficiency_pct": round(self.discharge_efficiency_pct, 1),
             "roundtrip_efficiency_pct": round(self.roundtrip_efficiency_pct, 1),
-            "effective_cost_per_kwh": round(self.effective_cost_per_kwh, 1),
         }
 
     def save_state(self) -> dict:
