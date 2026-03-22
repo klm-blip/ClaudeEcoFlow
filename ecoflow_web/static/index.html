@@ -53,8 +53,8 @@ button:active{transform:scale(0.97)}
 .flow-line.active{animation-duration:0.8s;animation-timing-function:linear;animation-iteration-count:infinite}
 .flow-line.idle{stroke:var(--border);stroke-width:1.5;opacity:0.3;stroke-dasharray:6,6}
 .flow-node{fill:var(--panel);stroke-width:2}
-.flow-label{fill:var(--text);font-size:11px;text-anchor:middle;font-family:inherit}
-.flow-watts{font-size:10px;text-anchor:middle;font-family:inherit;font-weight:600}
+.flow-label{fill:var(--text);font-size:15px;text-anchor:middle;font-family:inherit}
+.flow-watts{font-size:14px;text-anchor:middle;font-family:inherit;font-weight:600}
 
 /* ─── Flow + Chart Row ────────────────────────────────────────────────── */
 .flow-chart-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px 10px}
@@ -240,33 +240,33 @@ button:active{transform:scale(0.97)}
     <!-- Grid node -->
     <circle cx="80" cy="160" r="42" class="flow-node" stroke="var(--blue)"/>
     <text x="80" y="153" class="flow-label" fill="var(--blue)">Grid</text>
-    <text id="grid-label" x="80" y="170" class="flow-label" fill="var(--dim)" style="font-size:9px">—</text>
-    <text id="grid-watts" x="80" y="183" class="flow-label" fill="var(--blue)" style="font-size:10px;font-weight:600"></text>
+    <text id="grid-label" x="80" y="173" class="flow-label" fill="var(--dim)" style="font-size:12px">—</text>
+    <text id="grid-watts" x="80" y="190" class="flow-label" fill="var(--blue)" style="font-size:14px;font-weight:600"></text>
 
     <!-- House (center) -->
     <g id="house-group" transform="translate(350,160)">
       <polygon points="0,-50 60,-10 60,50 -60,50 -60,-10" fill="var(--panel)" stroke="var(--teal)" stroke-width="2"/>
       <text y="5" class="flow-label" fill="var(--teal)">ESG</text>
-      <text id="house-mode" y="22" class="flow-label" fill="var(--dim)" style="font-size:9px">—</text>
+      <text id="house-mode" y="22" class="flow-label" fill="var(--dim)" style="font-size:12px">—</text>
     </g>
 
     <!-- Home load node -->
     <circle cx="620" cy="160" r="42" class="flow-node" stroke="var(--teal)"/>
     <text x="620" y="153" class="flow-label" fill="var(--teal)">Home</text>
-    <text id="home-label" x="620" y="170" class="flow-label" fill="var(--dim)" style="font-size:9px">—</text>
-    <text id="home-watts" x="620" y="183" class="flow-label" fill="var(--teal)" style="font-size:10px;font-weight:600"></text>
+    <text id="home-label" x="620" y="173" class="flow-label" fill="var(--dim)" style="font-size:12px">—</text>
+    <text id="home-watts" x="620" y="190" class="flow-label" fill="var(--teal)" style="font-size:14px;font-weight:600"></text>
 
     <!-- Battery node -->
-    <rect x="105" y="258" width="80" height="44" rx="8" class="flow-node" stroke="var(--charge-green)" id="batt-rect"/>
+    <rect x="100" y="255" width="90" height="50" rx="8" class="flow-node" stroke="var(--charge-green)" id="batt-rect"/>
     <rect x="109" y="290" width="0" height="8" rx="3" fill="var(--charge-green)" opacity="0.4" id="batt-fill-bar"/>
-    <text x="145" y="275" class="flow-label" style="font-size:10px;font-weight:600" id="batt-node-label" fill="var(--charge-green)">Battery</text>
-    <text id="batt-label" x="145" y="289" class="flow-label" fill="var(--dim)" style="font-size:9px">—</text>
+    <text x="145" y="275" class="flow-label" style="font-size:14px;font-weight:600" id="batt-node-label" fill="var(--charge-green)">Battery</text>
+    <text id="batt-label" x="145" y="293" class="flow-label" fill="var(--dim)" style="font-size:12px">—</text>
 
     <!-- Solar node (above Grid — grid-tied solar feeds into grid interconnect) -->
     <g id="solar-group">
-      <rect x="45" y="22" width="70" height="38" rx="4" class="flow-node" stroke="var(--discharge-amber)" id="solar-rect"/>
-      <text x="80" y="37" class="flow-label" fill="var(--discharge-amber)" style="font-size:10px;font-weight:600" id="solar-node-label">Solar</text>
-      <text id="solar-label" x="80" y="52" class="flow-label" fill="var(--dim)" style="font-size:9px">--</text>
+      <rect x="40" y="18" width="80" height="46" rx="4" class="flow-node" stroke="var(--discharge-amber)" id="solar-rect"/>
+      <text x="80" y="37" class="flow-label" fill="var(--discharge-amber)" style="font-size:14px;font-weight:600" id="solar-node-label">Solar</text>
+      <text id="solar-label" x="80" y="55" class="flow-label" fill="var(--dim)" style="font-size:12px">--</text>
     </g>
   </svg>
 </div>
