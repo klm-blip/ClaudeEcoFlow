@@ -280,6 +280,12 @@ button:active{transform:scale(0.97)}
   <span id="auto-text">Automation disabled — manual control</span>
 </div>
 
+<!-- Arbiter Strip -->
+<div class="auto-strip" style="margin-top:4px;border-color:var(--purple,#9b59b6)">
+  <div id="arbiter-dot" class="auto-dot off" style="background:var(--purple,#9b59b6)"></div>
+  <span id="arbiter-text" style="color:var(--dim)">Arbiter: waiting for data&hellip;</span>
+</div>
+
 <!-- Readings (mobile shows here, desktop in two-col) -->
 <div class="mobile-only" style="padding:8px">
   <div class="section-card">
@@ -958,6 +964,23 @@ function render() {
     atxt.textContent = 'Automation disabled \u2014 manual control';
   }
 
+  // ─── Arbiter strip ───────────────────────────────────────────────
+  const arbDot = document.getElementById('arbiter-dot');
+  const arbTxt = document.getElementById('arbiter-text');
+  const arb = state.arbiter || {};
+  if (arb.action) {
+    const ago = arb.ts ? Math.round((Date.now()/1000 - arb.ts)/60) : '?';
+    const tag = arb.dry_run ? 'DRY-RUN' : 'LIVE';
+    const colors = {discharge:'var(--discharge-amber)',charge:'var(--charge-green)',backup:'var(--blue)',hold:'var(--dim)'};
+    arbDot.style.background = colors[arb.action] || 'var(--purple)';
+    arbTxt.style.color = '';
+    arbTxt.textContent = '\ud83e\udde0 Arbiter [' + tag + ']: ' + arb.reason + ' (' + ago + 'm ago)';
+  } else {
+    arbDot.style.background = 'var(--dim)';
+    arbTxt.style.color = 'var(--dim)';
+    arbTxt.textContent = 'Arbiter: waiting for data\u2026';
+  }
+
   // ─── Mode buttons ─────────────────────────────────────────────────
   document.getElementById('btn-backup').className = 'mode-btn' + (p.op_mode === 1 ? ' active' : '');
   document.getElementById('btn-selfpwr').className = 'mode-btn' + (p.op_mode === 2 ? ' active' : '');
@@ -1512,15 +1535,24 @@ async function fetchEnergyDay(dateStr) {
   _energyDate = dateStr;
   document.getElementById('energy-date').value = dateStr;
   try {
-    const resp = await fetch('/api/energy?date=' + dateStr);
-    const data = await resp.json();
-    renderEnergyTable(data.hours, dateStr);
+    const [energyResp, arbiterResp] = await Promise.all([
+      fetch('/api/energy?date=' + dateStr),
+      fetch('/api/arbiter/log?date=' + dateStr).catch(() => null),
+    ]);
+    const data = await energyResp.json();
+    let arbiterHours = {};
+    if (arbiterResp && arbiterResp.ok) {
+      const arbData = await arbiterResp.json();
+      arbiterHours = arbData.hours || {};
+    }
+    renderEnergyTable(data.hours, dateStr, arbiterHours);
   } catch(e) {
     document.getElementById('energy-table').innerHTML = '<div style="color:var(--dim)">Failed to load</div>';
   }
 }
 
-function renderEnergyTable(hours, dateStr) {
+function renderEnergyTable(hours, dateStr, arbiterHours) {
+  arbiterHours = arbiterHours || {};
   const el = document.getElementById('energy-table');
   const sumEl = document.getElementById('energy-day-summary');
   if (!hours || !hours.length) {
@@ -1528,6 +1560,7 @@ function renderEnergyTable(hours, dateStr) {
     sumEl.textContent = '';
     return;
   }
+  const hasArbiter = Object.keys(arbiterHours).length > 0;
   let html = '<table style="width:100%;border-collapse:collapse;font-size:0.75rem;font-variant-numeric:tabular-nums">';
   html += '<thead><tr style="color:var(--dim);border-bottom:1px solid var(--border)">' +
     '<th style="text-align:left;padding:4px">Hour</th>' +
@@ -1537,8 +1570,10 @@ function renderEnergyTable(hours, dateStr) {
     '<th style="text-align:right;padding:4px">Dis</th>' +
     '<th style="text-align:right;padding:4px">Cost</th>' +
     '<th style="text-align:right;padding:4px">Avg\u00a2</th>' +
+    (hasArbiter ? '<th style="text-align:center;padding:4px;color:var(--purple)">\ud83e\udde0</th>' : '') +
     '</tr></thead><tbody>';
   let totalGrid=0, totalLoad=0, totalChg=0, totalDis=0, totalCost=0;
+  let agree=0, disagree=0;
   hours.forEach(r => {
     const h = parseInt(r.hour);
     const hStr = (h % 12 || 12) + (h < 12 ? 'a' : 'p');
@@ -1546,6 +1581,36 @@ function renderEnergyTable(hours, dateStr) {
     const chg = parseFloat(r.battery_charge_kwh||0), dis = parseFloat(r.battery_discharge_kwh||0);
     const cost = parseFloat(r.cost_cents||0), avg = parseFloat(r.avg_price_cents||0);
     totalGrid+=grid; totalLoad+=load; totalChg+=chg; totalDis+=dis; totalCost+=cost;
+
+    // Arbiter comparison
+    let arbCell = '';
+    if (hasArbiter) {
+      const arb = arbiterHours[String(h)];
+      if (arb) {
+        // Determine what dashboard actually did this hour
+        let dashAction = 'hold';
+        if (dis > 0.05) dashAction = 'discharge';
+        else if (chg > 0.05) dashAction = 'charge';
+
+        // Compare
+        const arbAction = arb.action;
+        const same = (dashAction === arbAction) ||
+          (dashAction === 'hold' && arbAction === 'backup') ||
+          (dashAction === 'backup' && arbAction === 'hold');
+        if (same) agree++; else disagree++;
+
+        const icons = {discharge:'\u26a1',charge:'\ud83d\udd0b',backup:'\ud83d\udd0c',hold:'\u23f8'};
+        const colors = {discharge:'var(--discharge-amber)',charge:'var(--charge-green)',backup:'var(--blue)',hold:'var(--dim)'};
+        const dot = same ? '\ud83d\udfe2' : '\ud83d\udfe1';
+        arbCell = '<td style="text-align:center;padding:3px 4px" title="' +
+          arb.reason.replace(/"/g,'&quot;') + '">' +
+          dot + '<span style="color:' + (colors[arbAction]||'var(--dim)') + '">' +
+          (icons[arbAction]||'?') + '</span></td>';
+      } else {
+        arbCell = '<td style="text-align:center;padding:3px 4px;color:var(--dim)">\u2014</td>';
+      }
+    }
+
     html += '<tr style="border-bottom:1px solid var(--border)">' +
       '<td style="padding:3px 4px">' + hStr + '</td>' +
       '<td style="text-align:right;padding:3px 4px">' + grid.toFixed(2) + '</td>' +
@@ -1554,13 +1619,20 @@ function renderEnergyTable(hours, dateStr) {
       '<td style="text-align:right;padding:3px 4px;color:var(--discharge-amber)">' + dis.toFixed(2) + '</td>' +
       '<td style="text-align:right;padding:3px 4px;color:var(--amber)">' + cost.toFixed(1) + '\u00a2</td>' +
       '<td style="text-align:right;padding:3px 4px">' + avg.toFixed(1) + '</td>' +
+      arbCell +
       '</tr>';
   });
   html += '</tbody></table>';
   el.innerHTML = html;
-  sumEl.innerHTML = 'Day total: Grid ' + totalGrid.toFixed(2) + ' kWh | Load ' + totalLoad.toFixed(2) +
+  let summary = 'Day total: Grid ' + totalGrid.toFixed(2) + ' kWh | Load ' + totalLoad.toFixed(2) +
     ' kWh | Charge ' + totalChg.toFixed(2) + ' kWh | Discharge ' + totalDis.toFixed(2) +
     ' kWh | <span style="color:var(--amber)">Cost ' + totalCost.toFixed(1) + '\u00a2 ($' + (totalCost/100).toFixed(2) + ')</span>';
+  if (hasArbiter && (agree + disagree) > 0) {
+    summary += '<br><span style="color:var(--purple)">\ud83e\udde0 Arbiter agreement: ' +
+      agree + '/' + (agree+disagree) + ' hours (' + Math.round(agree/(agree+disagree)*100) + '%)</span>' +
+      ' \u2014 <span style="color:var(--dim)">\ud83d\udfe2 = agree, \ud83d\udfe1 = different</span>';
+  }
+  sumEl.innerHTML = summary;
 }
 
 async function fetchEnergySummary(period) {

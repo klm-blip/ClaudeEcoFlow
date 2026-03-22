@@ -58,6 +58,9 @@ enphase_poller  = None    # set in main() if credentials exist
 commands_live   = True    # LIVE commands by default (production)
 command_log     = []      # [{ts, live, text}, ...] last 30 entries
 mqtt_handler    = None    # set in main()
+
+# Arbiter state (updated by POST /api/arbiter/action)
+arbiter_state   = {"action": None, "reason": "Waiting for Arbiter...", "dry_run": True, "ts": 0}
 notifier        = TelegramNotifier()
 battery_pool    = BatteryCostPool()
 energy_tracker  = EnergyTracker()
@@ -145,6 +148,52 @@ def api_state():
     return _build_state_msg()
 
 
+@app.route("/api/arbiter/log")
+def api_arbiter_log():
+    """Return Arbiter decisions for a given date, grouped by hour.
+
+    Returns hourly summary: dominant action + count of each action type.
+    """
+    import csv as _csv
+    date_str = request.args.get("date", datetime.date.today().isoformat())
+    log_file = os.path.join("logs", "arbiter.csv")
+    if not os.path.exists(log_file):
+        return json.dumps({"date": date_str, "hours": {}})
+
+    # Read all rows for the requested date
+    hourly = {}  # hour -> {action_counts, reasons}
+    try:
+        with open(log_file, "r") as f:
+            reader = _csv.DictReader(f)
+            for row in reader:
+                ts = row.get("timestamp", "")
+                if not ts.startswith(date_str):
+                    continue
+                try:
+                    hour = int(ts[11:13])
+                except (ValueError, IndexError):
+                    continue
+                action = row.get("action", "hold")
+                reason = row.get("reason", "")
+                if hour not in hourly:
+                    hourly[hour] = {"actions": {}, "last_reason": ""}
+                hourly[hour]["actions"][action] = hourly[hour]["actions"].get(action, 0) + 1
+                hourly[hour]["last_reason"] = reason
+    except Exception:
+        pass
+
+    # Summarize: pick dominant action per hour
+    result = {}
+    for hour, data in hourly.items():
+        dominant = max(data["actions"], key=data["actions"].get)
+        result[str(hour)] = {
+            "action": dominant,
+            "counts": data["actions"],
+            "reason": data["last_reason"],
+        }
+    return json.dumps({"date": date_str, "hours": result})
+
+
 @app.route("/api/arbiter/action", methods=["POST"])
 def api_arbiter_action():
     """Accept a command from the Arbiter.
@@ -158,13 +207,21 @@ def api_arbiter_action():
 
     Optional: "reason": "..." for logging.
     """
+    global arbiter_state
     data = request.get_json(silent=True) or {}
     action = data.get("action", "hold")
     reason = data.get("reason", f"Arbiter: {action}")
     dry_run = data.get("dry_run", False)
 
+    # Always update arbiter state for dashboard display
+    arbiter_state = {
+        "action": action, "reason": reason,
+        "dry_run": dry_run, "ts": time.time(),
+    }
+
     if dry_run:
         _log_command(f"ARBITER [DRY]: {reason}")
+        _broadcast()  # push updated arbiter state to dashboard
         return json.dumps({"ok": True, "executed": False, "reason": reason})
 
     if action == "discharge":
@@ -243,6 +300,7 @@ def _build_state_msg():
             "override_remaining": max(0, int(kia_auto.manual_override_until - time.time()))
                                   if kia_auto.manual_override_until > time.time() else 0,
         },
+        "arbiter":        arbiter_state,
     })
 
 
