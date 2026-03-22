@@ -4,7 +4,7 @@ Autonomous home energy management for EcoFlow battery systems, built to optimize
 
 ## What This Does
 
-Controls an EcoFlow Delta Pro Ultra X + Smart Home Panel 3 to automatically charge the battery when grid electricity is cheap and discharge to power the home when prices are high. The system was built because EcoFlow's built-in TOU (time-of-use) scheduling doesn't support real-time hourly rate plans like ComEd's BESH.
+Controls an EcoFlow Delta Pro Ultra X + Smart Gateway to automatically charge the battery when grid electricity is cheap and discharge to power the home when prices are high. The system was built because EcoFlow's built-in TOU (time-of-use) scheduling doesn't support real-time hourly rate plans like ComEd's BESH.
 
 ## Architecture
 
@@ -27,7 +27,7 @@ Controls an EcoFlow Delta Pro Ultra X + Smart Home Panel 3 to automatically char
 ## Hardware
 
 - EcoFlow Delta Pro Ultra X (8 batteries, 49 kWh)
-- EcoFlow Smart Home Panel 3 (gateway)
+- EcoFlow Smart Gateway (HR65) — may also work with Smart Home Panel 3 (untested)
 - Raspberry Pi 5 (controller)
 - Enphase IQ8+ microinverters (solar, grid-tied)
 
