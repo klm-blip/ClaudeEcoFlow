@@ -1673,7 +1673,8 @@ async function fetchEnergyDay(dateStr) {
     }
     renderEnergyTable(data.hours, dateStr, arbiterHours);
   } catch(e) {
-    document.getElementById('energy-table').innerHTML = '<div style="color:var(--dim)">Failed to load</div>';
+    console.error('fetchEnergyDay error:', e);
+    document.getElementById('energy-table').innerHTML = '<div style="color:var(--dim)">Failed to load: ' + e.message + '</div>';
   }
 }
 
@@ -1866,9 +1867,21 @@ function renderArbiterComparison(hours, arbiterHours, actualCost, totalGrid, tot
     }
 
     if (missedHours === 0 && avoidedHours === 0) {
-      html += '<div style="padding:6px;background:var(--panel2);border-radius:6px;grid-column:1/3">';
-      html += '<div style="color:var(--green);font-weight:600">Manual and Arbiter aligned — no missed opportunities</div>';
-      html += '</div>';
+      if (manualDischargeHours === arbiterDischargeHours) {
+        html += '<div style="padding:6px;background:var(--panel2);border-radius:6px;grid-column:1/3">';
+        html += '<div style="color:var(--green);font-weight:600">Manual and Arbiter aligned — no missed opportunities</div>';
+        html += '</div>';
+      } else if (manualDischargeHours > arbiterDischargeHours) {
+        html += '<div style="padding:6px;background:var(--panel2);border-radius:6px;grid-column:1/3">';
+        html += '<div style="color:var(--amber);font-weight:600">You discharged ' + (manualDischargeHours - arbiterDischargeHours) +
+          ' more hour(s) than Arbiter would have — spread was OK so no loss</div>';
+        html += '</div>';
+      } else {
+        html += '<div style="padding:6px;background:var(--panel2);border-radius:6px;grid-column:1/3">';
+        html += '<div style="color:var(--amber);font-weight:600">Arbiter would have discharged ' + (arbiterDischargeHours - manualDischargeHours) +
+          ' more hour(s) — but no major savings missed</div>';
+        html += '</div>';
+      }
     }
     html += '</div>';
   }
