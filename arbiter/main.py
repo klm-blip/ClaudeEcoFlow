@@ -43,7 +43,14 @@ def _fetch_state() -> dict | None:
     try:
         resp = requests.get(f"{config.DASHBOARD_URL}/api/state", timeout=10)
         resp.raise_for_status()
-        return resp.json()
+        state = resp.json()
+        # Debug: log key values to diagnose missing data
+        power = state.get("power", {})
+        price = state.get("price", {})
+        log.debug("State: SOC=%s, price=%s, battery_w=%s, stale=%s",
+                  power.get("soc_pct"), price.get("effective_price"),
+                  power.get("battery_w"), power.get("stale"))
+        return state
     except Exception as e:
         log.warning("Failed to fetch state from dashboard: %s", e)
         return None
