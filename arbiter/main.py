@@ -115,7 +115,7 @@ def _log_csv(state: dict, action: str, reason: str):
         "dry_run": config.DRY_RUN,
     }
 
-    with open(config.LOG_FILE, "a", newline="") as f:
+    with open(config.LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=row.keys())
         if not file_exists:
             writer.writeheader()

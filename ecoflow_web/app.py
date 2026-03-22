@@ -162,8 +162,9 @@ def api_arbiter_log():
 
     # Read all rows for the requested date
     hourly = {}  # hour -> {action_counts, reasons}
+    valid_actions = {"discharge", "charge", "backup", "hold"}
     try:
-        with open(log_file, "r") as f:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
             reader = _csv.DictReader(f)
             for row in reader:
                 ts = row.get("timestamp", "")
@@ -173,8 +174,11 @@ def api_arbiter_log():
                     hour = int(ts[11:13])
                 except (ValueError, IndexError):
                     continue
-                action = row.get("action", "hold")
-                reason = row.get("reason", "")
+                action = (row.get("action") or "hold").strip()
+                # Sanitize: if CSV parsing mangled the action, skip this row
+                if action not in valid_actions:
+                    continue
+                reason = (row.get("reason") or "")
                 if hour not in hourly:
                     hourly[hour] = {"actions": {}, "last_reason": ""}
                 hourly[hour]["actions"][action] = hourly[hour]["actions"].get(action, 0) + 1

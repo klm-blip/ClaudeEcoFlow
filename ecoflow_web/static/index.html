@@ -1719,11 +1719,10 @@ function renderEnergyTable(hours, dateStr, arbiterHours) {
         if (dis > 0.05) dashAction = 'discharge';
         else if (chg > 0.05) dashAction = 'charge';
 
-        // Compare
+        // Compare — treat hold/backup as equivalent
         const arbAction = arb.action;
-        const same = (dashAction === arbAction) ||
-          (dashAction === 'hold' && arbAction === 'backup') ||
-          (dashAction === 'backup' && arbAction === 'hold');
+        const normalize = a => (a === 'backup') ? 'hold' : a;
+        const same = normalize(dashAction) === normalize(arbAction);
         if (same) agree++; else disagree++;
 
         const icons = {discharge:'\u26a1',charge:'\ud83d\udd0b',backup:'\ud83d\udd0c',hold:'\u23f8'};
