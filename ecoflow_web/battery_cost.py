@@ -168,9 +168,9 @@ class BatteryCostPool:
         self._charging = False
         if (self._session_soc_start is not None
                 and soc_pct is not None
-                and self._session_meter_wh > 50):  # ignore tiny sessions
+                and self._session_meter_wh > 500):  # ignore small sessions (<500 Wh)
             soc_delta = soc_pct - self._session_soc_start
-            if soc_delta > 0.5:  # meaningful charge
+            if soc_delta > 3.0:  # need 3%+ SOC change (~1.5 kWh) for reliable measurement
                 stored_wh = (soc_delta / 100.0) * self.capacity_wh
                 self._charge_total_in += self._session_meter_wh
                 self._charge_total_stored += stored_wh
@@ -200,9 +200,9 @@ class BatteryCostPool:
         self._discharging = False
         if (self._discharge_soc_start is not None
                 and soc_pct is not None
-                and self._discharge_ac_wh > 50):  # ignore tiny sessions
+                and self._discharge_ac_wh > 500):  # ignore small sessions (<500 Wh)
             soc_delta = self._discharge_soc_start - soc_pct  # positive = SOC dropped
-            if soc_delta > 0.5:  # meaningful discharge
+            if soc_delta > 3.0:  # need 3%+ SOC change (~1.5 kWh) for reliable measurement
                 consumed_wh = (soc_delta / 100.0) * self.capacity_wh
                 self._discharge_total_out += consumed_wh
                 self._discharge_total_delivered += self._discharge_ac_wh
@@ -247,26 +247,39 @@ class BatteryCostPool:
 
     @property
     def roundtrip_efficiency_pct(self) -> float:
-        """Combined AC→DC→AC roundtrip efficiency.
-        Returns 0 if either direction hasn't been measured yet."""
-        if self.charge_efficiency_pct <= 0 or self.discharge_efficiency_pct <= 0:
-            return 0.0
-        return (self.charge_efficiency_pct / 100.0
-                * self.discharge_efficiency_pct / 100.0
-                * 100.0)
+        """Combined AC→DC→AC roundtrip efficiency using sane-bounded values.
+        Returns default 81% (0.9×0.9) if no reliable data yet."""
+        return self._sane_charge_efficiency() * self._sane_discharge_efficiency() * 100.0
 
     @property
     def effective_cost_per_kwh(self) -> float:
         """True cost per usable kWh delivered to home, accounting for
         both charge and discharge conversion losses.
-        Falls back to conservative 81% roundtrip if not yet measured."""
+        Falls back to conservative 90% discharge efficiency if not yet
+        measured or if measured value is outside sane range (70-100%)."""
         avg = self.avg_cost_cents_kwh
         if avg <= 0:
             return 0.0
         # avg_cost already reflects charge-side losses (we tracked grid Wh in)
         # but NOT discharge-side losses — divide by discharge efficiency
-        disch_eff = self.discharge_efficiency_pct / 100.0 if self.discharge_efficiency_pct > 0 else 0.90
+        disch_eff = self._sane_discharge_efficiency()
         return avg / disch_eff
+
+    def _sane_discharge_efficiency(self) -> float:
+        """Return discharge efficiency as a fraction, with sanity bounds.
+        Uses conservative 0.90 default if measured value is missing or
+        outside the plausible range of 70-100%."""
+        if (self.discharge_efficiency_pct > 0
+                and 70.0 <= self.discharge_efficiency_pct <= 100.0):
+            return self.discharge_efficiency_pct / 100.0
+        return 0.90  # conservative default
+
+    def _sane_charge_efficiency(self) -> float:
+        """Return charge efficiency as a fraction, with sanity bounds."""
+        if (self.charge_efficiency_pct > 0
+                and 70.0 <= self.charge_efficiency_pct <= 100.0):
+            return self.charge_efficiency_pct / 100.0
+        return 0.90  # conservative default
 
     # ── Init from SOC ─────────────────────────────────────────────────────
 
@@ -338,10 +351,19 @@ class BatteryCostPool:
                                             d.get("efficiency_pct", 0.0))
         self.efficiency_pct = self.charge_efficiency_pct  # legacy alias
 
-        # Discharge efficiency
-        self._discharge_total_out = d.get("discharge_total_out", 0.0)
-        self._discharge_total_delivered = d.get("discharge_total_delivered", 0.0)
-        self.discharge_efficiency_pct = d.get("discharge_efficiency_pct", 0.0)
+        # Discharge efficiency — reset if outside sane range (bad data from old thresholds)
+        disch_pct = d.get("discharge_efficiency_pct", 0.0)
+        if 70.0 <= disch_pct <= 100.0:
+            self._discharge_total_out = d.get("discharge_total_out", 0.0)
+            self._discharge_total_delivered = d.get("discharge_total_delivered", 0.0)
+            self.discharge_efficiency_pct = disch_pct
+        else:
+            # Reset — bogus data from short sessions with old 0.5% threshold
+            self._discharge_total_out = 0.0
+            self._discharge_total_delivered = 0.0
+            self.discharge_efficiency_pct = 0.0
+            if disch_pct > 0:
+                log.info("Discharge efficiency %.1f%% outside sane range, resetting to default", disch_pct)
 
         log.info(
             "Battery pool loaded: legacy %.0f Wh + observed %.0f Wh = %.0f Wh, "
