@@ -9,6 +9,9 @@ enphase_credentials.txt
 # Reference repos (cloned external repos, not our code)
 references/
 
+# Archive (old test scripts, APK reversing, setup docs — local only)
+archive/
+
 # APK and extracted DEX files (too large for git)
 *.apk
 apk_extracted/
