@@ -84,11 +84,9 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
             continue
 
         # ── Manual (actual) side ────────────────────────────────────────
-        # actual_cost from CSV = grid energy cost only
-        # Add battery discharge cost (delivered cost × kWh discharged)
-        manual_battery_cost = discharge_kwh * effective_cost if discharge_kwh > 0 else 0
-        manual_total_cost = actual_cost + manual_battery_cost
-        total_manual_cost += manual_total_cost
+        # actual_cost from CSV = grid energy cost only (charge cost already included)
+        # Discharge is "free" — energy was paid for when charged
+        total_manual_cost += actual_cost
         total_manual_grid_kwh += grid_kwh
 
         # ── Build a synthetic state dict for the Arbiter ────────────────
@@ -136,15 +134,13 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
                 remaining_load = load_kwh - actual_discharge_kwh
                 sim_soc -= actual_discharge_soc
                 sim_hour_grid_kwh = remaining_load
-                # Cost = grid portion at grid rate + battery portion at delivered cost
-                sim_hour_cost = (remaining_load * total_cost_per_kwh +
-                                 actual_discharge_kwh * effective_cost)
+                sim_hour_cost = remaining_load * total_cost_per_kwh
                 sim_discharge_kwh = actual_discharge_kwh
             else:
-                # Battery covers full load — cost is the battery's delivered cost
+                # Battery covers full load — no grid cost (energy already paid for when charged)
                 sim_soc -= soc_delta
                 sim_hour_grid_kwh = 0
-                sim_hour_cost = load_kwh * effective_cost
+                sim_hour_cost = 0
                 sim_discharge_kwh = load_kwh
 
         elif action == "charge":
@@ -200,7 +196,7 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
             "total_price": round(total_cost_per_kwh, 2),
             # Manual (actual)
             "manual_grid_kwh": round(grid_kwh, 3),
-            "manual_cost": round(manual_total_cost, 2),
+            "manual_cost": round(actual_cost, 2),
             "manual_charge_kwh": round(charge_kwh, 3),
             "manual_discharge_kwh": round(discharge_kwh, 3),
             # Arbiter simulation
