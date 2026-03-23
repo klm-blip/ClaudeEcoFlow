@@ -64,17 +64,25 @@ def _get_soc_penalty(soc: float, thresholds: dict) -> tuple[float, str]:
     return last_penalty, f"<{soc_bands[-1][0] if soc_bands else 40}%"
 
 
-def _get_timing_adjustment() -> tuple[float, str]:
-    """Return (adjustment_cents, period_label) based on current time.
+def _get_timing_adjustment(override_hour: int = None, override_weekday: int = None) -> tuple[float, str]:
+    """Return (adjustment_cents, period_label) based on time of day.
 
     Negative = more willing to discharge (peak hours).
     Positive = less willing (save for later).
-    """
-    now = datetime.datetime.now()
-    hour = now.hour
-    weekday = now.weekday()  # 0=Monday, 6=Sunday
 
-    # Evening peak: 5 PM (17) through midnight (0)
+    Args:
+        override_hour: If set, use this hour instead of current time (for simulation)
+        override_weekday: If set, use this weekday (0=Mon, 6=Sun)
+    """
+    if override_hour is not None:
+        hour = override_hour
+        weekday = override_weekday if override_weekday is not None else datetime.datetime.now().weekday()
+    else:
+        now = datetime.datetime.now()
+        hour = now.hour
+        weekday = now.weekday()  # 0=Monday, 6=Sunday
+
+    # Evening peak: 5 PM (17) through 11 PM (23)
     if 17 <= hour <= 23:
         return config.TIMING_EVENING_PEAK, "evening-peak"
 
@@ -82,15 +90,16 @@ def _get_timing_adjustment() -> tuple[float, str]:
     if 5 <= hour < 8 and weekday < 5:
         return config.TIMING_MORNING_PEAK, "morning-peak"
 
-    # Overnight cheap: 1-5 AM
-    if 1 <= hour < 5:
+    # Overnight cheap: midnight (0) through 5 AM
+    if hour < 5:
         return config.TIMING_OVERNIGHT_CHEAP, "overnight-cheap"
 
-    # Neutral hours
+    # Neutral hours (8 AM - 5 PM)
     return 0.0, "neutral"
 
 
-def _discharge_willingness(soc: float, thresholds: dict) -> tuple[float, str]:
+def _discharge_willingness(soc: float, thresholds: dict,
+                           override_hour: int = None, override_weekday: int = None) -> tuple[float, str]:
     """Calculate the spread (cents) required before we'll discharge.
 
     Returns (required_spread, explanation_string).
@@ -99,7 +108,7 @@ def _discharge_willingness(soc: float, thresholds: dict) -> tuple[float, str]:
     """
     base = config.SAFETY_MARGIN_CENTS
     soc_penalty, soc_label = _get_soc_penalty(soc, thresholds)
-    timing_adj, timing_label = _get_timing_adjustment()
+    timing_adj, timing_label = _get_timing_adjustment(override_hour, override_weekday)
 
     required = base + soc_penalty + timing_adj
     explanation = (
@@ -111,11 +120,13 @@ def _discharge_willingness(soc: float, thresholds: dict) -> tuple[float, str]:
 
 # ── Main evaluation ────────────────────────────────────────────────────────
 
-def evaluate(state: dict) -> tuple[str, str]:
+def evaluate(state: dict, override_hour: int = None, override_weekday: int = None) -> tuple[str, str]:
     """Evaluate the profitability gate with discharge willingness.
 
     Args:
         state: Full dashboard state from /api/state
+        override_hour: If set, use this hour for timing (for simulation)
+        override_weekday: If set, use this weekday (for simulation)
 
     Returns:
         (action, reason) where action is one of:
@@ -211,13 +222,25 @@ def evaluate(state: dict) -> tuple[str, str]:
 
     # ── Discharge willingness gate ────────────────────────────────────
     spread = total_grid_cost - eff_battery_cost
-    required_spread, willingness_detail = _discharge_willingness(soc, thresholds)
+    required_spread, willingness_detail = _discharge_willingness(soc, thresholds, override_hour, override_weekday)
+
+    # Refill-aware check: don't discharge unless the current total grid price
+    # is above what it would cost to refill the battery at cheap rates.
+    # Expected refill cost = (cheap_energy + T&D) / roundtrip_eff
+    # Using the charge band price cap as the "cheap energy" estimate:
+    # if we'd only charge below band_price_cap, refill cost is at least that.
+    expected_refill_energy = max(band_price_cap, 0)  # what we'd pay to recharge
+    expected_refill_total = (expected_refill_energy + config.TD_RATE) / roundtrip_eff
+    refill_spread = total_grid_cost - expected_refill_total
 
     # DISCHARGE: spread exceeds willingness threshold AND above energy floor
-    if spread > required_spread and energy_price >= config.MIN_DISCHARGE_ENERGY_PRICE:
+    # AND current price is above expected refill cost (don't discharge to refill at same price)
+    if (spread > required_spread and energy_price >= config.MIN_DISCHARGE_ENERGY_PRICE
+            and refill_spread > required_spread):
         return "discharge", (
             f"DISCHARGE: grid {total_grid_cost:.1f}¢ vs batt {eff_battery_cost:.1f}¢ "
             f"(spread {spread:.1f}¢ > needed {required_spread:.1f}¢) "
+            f"refill {expected_refill_total:.1f}¢ "
             f"[{willingness_detail}] | SOC {soc:.0f}%"
         )
 
@@ -232,8 +255,15 @@ def evaluate(state: dict) -> tuple[str, str]:
         )
 
     # HOLD: not worth discharging, too expensive to charge
+    hold_reasons = []
+    if spread <= required_spread:
+        hold_reasons.append(f"spread {spread:.1f}¢ <= needed {required_spread:.1f}¢")
+    if refill_spread <= required_spread:
+        hold_reasons.append(f"refill spread {refill_spread:.1f}¢ <= needed {required_spread:.1f}¢ (refill cost {expected_refill_total:.1f}¢)")
+    if energy_price < config.MIN_DISCHARGE_ENERGY_PRICE:
+        hold_reasons.append(f"energy {energy_price:.1f}¢ < floor {config.MIN_DISCHARGE_ENERGY_PRICE:.1f}¢")
     return "hold", (
-        f"HOLD: grid {total_grid_cost:.1f}¢ vs batt {eff_battery_cost:.1f}¢ "
-        f"(spread {spread:.1f}¢, need {required_spread:.1f}¢) "
-        f"[{willingness_detail}] | {band_name} needs <={band_price_cap:.1f}¢ | SOC {soc:.0f}%"
+        f"HOLD: grid {total_grid_cost:.1f}¢ vs batt {eff_battery_cost:.1f}¢ | "
+        + " | ".join(hold_reasons) +
+        f" [{willingness_detail}] | {band_name} needs <={band_price_cap:.1f}¢ | SOC {soc:.0f}%"
     )

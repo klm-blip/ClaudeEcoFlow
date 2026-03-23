@@ -93,12 +93,16 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
         total_manual_grid_kwh += grid_kwh
 
         # ── Build a synthetic state dict for the Arbiter ────────────────
-        # The Arbiter's evaluate() expects the full dashboard state
+        # The Arbiter's evaluate() expects the full dashboard state.
+        # IMPORTANT: avg_price from energy CSV already includes T&D (total cost),
+        # so we pass (avg_price - TD_RATE) as the energy-only price since
+        # evaluate() adds TD_RATE internally.
         effective_cost = sim_battery_cost_pool / ROUNDTRIP_EFFICIENCY if sim_battery_cost_pool > 0 else 0
+        energy_only_price = avg_price - arb_config.TD_RATE
 
         state = {
             "price": {
-                "effective_price": avg_price,
+                "effective_price": energy_only_price,
             },
             "power": {
                 "soc_pct": sim_soc,
@@ -113,10 +117,17 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
         }
 
         # ── Ask the Arbiter what it would do ────────────────────────────
-        action, reason = evaluate(state)
+        # Parse date to get weekday for timing adjustments
+        try:
+            sim_date = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+            weekday = sim_date.weekday()
+        except ValueError:
+            weekday = None
+        action, reason = evaluate(state, override_hour=hour, override_weekday=weekday)
 
         # ── Simulate the Arbiter's action ───────────────────────────────
-        total_cost_per_kwh = avg_price + arb_config.TD_RATE
+        # avg_price already includes T&D — it IS the total cost per kWh
+        total_cost_per_kwh = avg_price
         sim_hour_cost = 0.0
         sim_hour_grid_kwh = 0.0
         sim_charge_kwh = 0.0
@@ -226,14 +237,13 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
             # Arbiter's battery is lower — estimate refill cost
             # kWh needed from grid = (soc_gap% × capacity) / charge_efficiency
             refill_kwh = (soc_gap / 100) * BATTERY_CAPACITY_KWH / CHARGE_EFFICIENCY
-            # Estimate refill price: use avg of cheapest hours seen today,
-            # or fall back to 2¢ energy (typical overnight)
+            # Estimate refill price: use avg of cheapest hours seen today
+            # NOTE: avg_price already includes T&D, so no need to add it
             cheap_prices = sorted([h["avg_price"] for h in hours if h["avg_price"] > 0])[:4]
             if cheap_prices:
-                est_refill_energy = sum(cheap_prices) / len(cheap_prices)
+                est_refill_total = sum(cheap_prices) / len(cheap_prices)
             else:
-                est_refill_energy = 2.0  # fallback: typical cheap overnight
-            est_refill_total = est_refill_energy + arb_config.TD_RATE
+                est_refill_total = 10.5  # fallback: ~2¢ energy + 8.5¢ T&D
             refill_cost = refill_kwh * est_refill_total
         elif soc_gap < 0:
             # Arbiter has MORE battery than actual — credit the saved energy
@@ -241,15 +251,16 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
             saved_kwh = (abs(soc_gap) / 100) * BATTERY_CAPACITY_KWH / CHARGE_EFFICIENCY
             cheap_prices = sorted([h["avg_price"] for h in hours if h["avg_price"] > 0])[:4]
             if cheap_prices:
-                est_price = sum(cheap_prices) / len(cheap_prices)
+                est_total = sum(cheap_prices) / len(cheap_prices)
             else:
-                est_price = 2.0
-            refill_cost = -(saved_kwh * (est_price + arb_config.TD_RATE))
+                est_total = 10.5
+            refill_cost = -(saved_kwh * est_total)
             refill_kwh = -saved_kwh
 
     # ── Totals ──────────────────────────────────────────────────────────
     arbiter_total_with_refill = total_arbiter_cost + refill_cost
     savings = total_manual_cost - arbiter_total_with_refill
+    # TARGET_ENERGY_RATE is energy-only (9.5¢), need to add T&D for total
     flat_rate_cost = total_manual_grid_kwh * (arb_config.TARGET_ENERGY_RATE + arb_config.TD_RATE)
 
     totals = {
