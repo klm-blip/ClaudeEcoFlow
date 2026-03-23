@@ -39,7 +39,8 @@ DEFAULT_CHARGE_RATES = {
 
 def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
                  starting_soc: float = None,
-                 battery_avg_cost: float = 10.5) -> dict:
+                 battery_avg_cost: float = 10.5,
+                 actual_ending_soc: float = None) -> dict:
     """Run the Arbiter's logic against a day's actual energy data.
 
     Args:
@@ -48,6 +49,7 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
         thresholds: Dashboard thresholds (charge bands, outage reserve, etc.)
         starting_soc: SOC at start of day (%). If None, estimates from data.
         battery_avg_cost: Average cost of energy in battery (cents/kWh)
+        actual_ending_soc: Real system SOC right now — used to compute refill cost
 
     Returns:
         Dict with hourly comparison and totals.
@@ -209,8 +211,44 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
             "arbiter_soc": round(sim_soc, 1),
         })
 
+    # ── Refill cost: bring simulated battery to actual system SOC ──────
+    # If the Arbiter used more battery than manual, it needs to refill
+    # more — that future grid cost should be counted.
+    # If the Arbiter used less (held battery), it would need less refill.
+    # Use actual ending SOC as the target (apples-to-apples).
+    refill_cost = 0.0
+    refill_kwh = 0.0
+    soc_gap = 0.0
+    if actual_ending_soc is not None:
+        soc_gap = actual_ending_soc - sim_soc  # positive = Arbiter needs to buy more
+        if soc_gap > 0:
+            # Arbiter's battery is lower — estimate refill cost
+            # kWh needed from grid = (soc_gap% × capacity) / charge_efficiency
+            refill_kwh = (soc_gap / 100) * BATTERY_CAPACITY_KWH / CHARGE_EFFICIENCY
+            # Estimate refill price: use avg of cheapest hours seen today,
+            # or fall back to 2¢ energy (typical overnight)
+            cheap_prices = sorted([h["avg_price"] for h in hours if h["avg_price"] > 0])[:4]
+            if cheap_prices:
+                est_refill_energy = sum(cheap_prices) / len(cheap_prices)
+            else:
+                est_refill_energy = 2.0  # fallback: typical cheap overnight
+            est_refill_total = est_refill_energy + arb_config.TD_RATE
+            refill_cost = refill_kwh * est_refill_total
+        elif soc_gap < 0:
+            # Arbiter has MORE battery than actual — credit the saved energy
+            # (it won't need to charge as much next cycle)
+            saved_kwh = (abs(soc_gap) / 100) * BATTERY_CAPACITY_KWH / CHARGE_EFFICIENCY
+            cheap_prices = sorted([h["avg_price"] for h in hours if h["avg_price"] > 0])[:4]
+            if cheap_prices:
+                est_price = sum(cheap_prices) / len(cheap_prices)
+            else:
+                est_price = 2.0
+            refill_cost = -(saved_kwh * (est_price + arb_config.TD_RATE))
+            refill_kwh = -saved_kwh
+
     # ── Totals ──────────────────────────────────────────────────────────
-    savings = total_manual_cost - total_arbiter_cost
+    arbiter_total_with_refill = total_arbiter_cost + refill_cost
+    savings = total_manual_cost - arbiter_total_with_refill
     flat_rate_cost = total_manual_grid_kwh * (arb_config.TARGET_ENERGY_RATE + arb_config.TD_RATE)
 
     totals = {
@@ -220,10 +258,15 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
         "arbiter_cost": round(total_arbiter_cost, 2),
         "arbiter_grid_kwh": round(total_arbiter_grid_kwh, 3),
         "arbiter_avg_rate": round(total_arbiter_cost / total_arbiter_grid_kwh, 2) if total_arbiter_grid_kwh > 0 else 0,
+        "refill_soc_gap": round(soc_gap, 1),
+        "refill_kwh": round(refill_kwh, 2),
+        "refill_cost": round(refill_cost, 2),
+        "arbiter_total_with_refill": round(arbiter_total_with_refill, 2),
         "savings_cents": round(savings, 2),
         "flat_rate_cost": round(flat_rate_cost, 2),
         "starting_soc": round(starting_soc, 1),
         "ending_soc": round(sim_soc, 1),
+        "actual_ending_soc": round(actual_ending_soc, 1) if actual_ending_soc is not None else None,
     }
 
     return {"date": date_str, "hours": hours, "totals": totals}

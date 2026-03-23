@@ -1819,12 +1819,16 @@ function renderSimulation(data) {
   if (t.manual_avg_rate > 0) html += ' \u00b7 ' + t.manual_avg_rate.toFixed(1) + '\u00a2/kWh';
   html += '</div></div>';
 
-  // Arbiter cost
+  // Arbiter cost (with refill)
+  const arbTotal = t.arbiter_total_with_refill != null ? t.arbiter_total_with_refill : t.arbiter_cost;
   html += '<div style="padding:8px;background:var(--panel2);border-radius:6px;border:1px solid var(--purple)">';
   html += '<div style="font-size:0.7rem;color:var(--purple)">Arbiter (Simulated)</div>';
-  html += '<div style="font-size:1.1rem;font-weight:600;color:var(--purple)">' + t.arbiter_cost.toFixed(1) + '\u00a2</div>';
+  html += '<div style="font-size:1.1rem;font-weight:600;color:var(--purple)">' + arbTotal.toFixed(1) + '\u00a2</div>';
   html += '<div style="font-size:0.7rem;color:var(--dim)">' + t.arbiter_grid_kwh.toFixed(1) + ' kWh grid';
-  if (t.arbiter_avg_rate > 0) html += ' \u00b7 ' + t.arbiter_avg_rate.toFixed(1) + '\u00a2/kWh';
+  if (t.refill_cost && Math.abs(t.refill_cost) > 0.1) {
+    html += '<br>incl ' + (t.refill_cost > 0 ? '+' : '') + t.refill_cost.toFixed(1) + '\u00a2 refill (' +
+      Math.abs(t.refill_soc_gap).toFixed(0) + '% SOC)';
+  }
   html += '</div></div>';
   html += '</div>';
 
@@ -1849,8 +1853,14 @@ function renderSimulation(data) {
 
   // SOC tracking
   html += '<div style="padding:6px 10px;background:var(--panel2);border-radius:6px;margin-bottom:10px;font-size:0.75rem">';
-  html += '<span style="color:var(--dim)">Simulated battery: </span>';
+  html += '<span style="color:var(--dim)">Sim battery: </span>';
   html += '<span style="color:var(--text)">Start ' + t.starting_soc.toFixed(0) + '% \u2192 End ' + t.ending_soc.toFixed(0) + '%</span>';
+  if (t.actual_ending_soc != null) {
+    html += '<span style="color:var(--dim)"> | Actual: ' + t.actual_ending_soc.toFixed(0) + '%</span>';
+    const gap = t.refill_soc_gap;
+    if (gap > 1) html += '<span style="color:var(--amber)"> (' + gap.toFixed(0) + '% to refill)</span>';
+    else if (gap < -1) html += '<span style="color:var(--green)"> (' + Math.abs(gap).toFixed(0) + '% ahead)</span>';
+  }
   html += '</div>';
 
   // Hourly detail table

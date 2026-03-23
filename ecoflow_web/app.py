@@ -181,11 +181,15 @@ def api_simulation():
     thresh_dict = thresholds.to_dict()
     battery_avg = battery_pool.avg_cost_cents_kwh
 
+    # Pass actual SOC so simulation can compute refill cost
+    actual_soc = power_state.soc_pct
+
     try:
         result = simulate_day(
             date_str, rows, thresh_dict,
             starting_soc=starting_soc,
             battery_avg_cost=battery_avg,
+            actual_ending_soc=actual_soc,
         )
         return json.dumps(result)
     except Exception as e:
