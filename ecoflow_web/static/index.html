@@ -1788,6 +1788,10 @@ async function fetchSimulation(dateStr) {
     const resp = await fetch('/api/simulation?date=' + dateStr);
     const data = await resp.json();
     statusEl.textContent = '';
+    if (data.error) {
+      el.innerHTML = '<span style="color:var(--amber)">Simulation error: ' + data.error + '</span>';
+      return;
+    }
     renderSimulation(data);
   } catch(e) {
     statusEl.textContent = '';

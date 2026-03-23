@@ -181,12 +181,17 @@ def api_simulation():
     thresholds = auto_thresholds.to_dict()
     battery_avg = battery_pool.avg_cost_cents_kwh
 
-    result = simulate_day(
-        date_str, rows, thresholds,
-        starting_soc=starting_soc,
-        battery_avg_cost=battery_avg,
-    )
-    return json.dumps(result)
+    try:
+        result = simulate_day(
+            date_str, rows, thresholds,
+            starting_soc=starting_soc,
+            battery_avg_cost=battery_avg,
+        )
+        return json.dumps(result)
+    except Exception as e:
+        import traceback
+        log.warning("Simulation error: %s\n%s", e, traceback.format_exc())
+        return json.dumps({"error": str(e), "date": date_str, "hours": [], "totals": {}})
 
 
 # ─── Arbiter API ──────────────────────────────────────────────────────────
