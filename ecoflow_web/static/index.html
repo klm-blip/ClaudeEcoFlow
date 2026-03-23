@@ -1853,7 +1853,7 @@ function renderSimulation(data) {
 
   // SOC tracking
   html += '<div style="padding:6px 10px;background:var(--panel2);border-radius:6px;margin-bottom:10px;font-size:0.75rem">';
-  html += '<span style="color:var(--dim)">Sim battery: </span>';
+  html += '<span style="color:var(--dim)">Sim battery (avg cost ' + (t.battery_cost_used || 0).toFixed(1) + '\u00a2): </span>';
   html += '<span style="color:var(--text)">Start ' + t.starting_soc.toFixed(0) + '% \u2192 End ' + t.ending_soc.toFixed(0) + '%</span>';
   if (t.actual_ending_soc != null) {
     html += '<span style="color:var(--dim)"> | Actual: ' + t.actual_ending_soc.toFixed(0) + '%</span>';

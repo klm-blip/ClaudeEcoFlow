@@ -65,7 +65,8 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
         starting_soc = 80.0  # reasonable default
 
     sim_soc = starting_soc
-    sim_battery_cost_pool = battery_avg_cost  # simplified: single avg cost
+    # Use battery avg cost, but never 0 — fall back to 10.5¢ (legacy estimate)
+    sim_battery_cost_pool = battery_avg_cost if battery_avg_cost > 0 else 10.5
 
     hours = []
     total_manual_cost = 0.0
@@ -267,6 +268,7 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
         "starting_soc": round(starting_soc, 1),
         "ending_soc": round(sim_soc, 1),
         "actual_ending_soc": round(actual_ending_soc, 1) if actual_ending_soc is not None else None,
+        "battery_cost_used": round(sim_battery_cost_pool, 2),
     }
 
     return {"date": date_str, "hours": hours, "totals": totals}
