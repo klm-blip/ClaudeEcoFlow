@@ -178,12 +178,12 @@ def api_simulation():
                 "avg_price_cents": str(cur["avg_price_cents"]),
             })
 
-    thresholds = auto_thresholds.to_dict()
+    thresh_dict = thresholds.to_dict()
     battery_avg = battery_pool.avg_cost_cents_kwh
 
     try:
         result = simulate_day(
-            date_str, rows, thresholds,
+            date_str, rows, thresh_dict,
             starting_soc=starting_soc,
             battery_avg_cost=battery_avg,
         )
