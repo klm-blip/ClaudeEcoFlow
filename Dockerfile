@@ -6,8 +6,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application package
+# Copy the application package + arbiter (used by simulator)
 COPY ecoflow_web/ ecoflow_web/
+COPY arbiter/ arbiter/
 
 EXPOSE 5000
 

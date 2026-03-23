@@ -140,6 +140,55 @@ def api_energy_dates():
     return json.dumps({"dates": EnergyTracker.available_dates()})
 
 
+# ─── Simulation API ──────────────────────────────────────────────────────
+
+@app.route("/api/simulation")
+def api_simulation():
+    """Run the alternate-world simulation for a given date.
+
+    Query params:
+        date: YYYY-MM-DD (default: today)
+        starting_soc: initial SOC % (default: auto-detect)
+    """
+    from .simulator import simulate_day
+    date_str = request.args.get("date", datetime.date.today().isoformat())
+    starting_soc = request.args.get("starting_soc")
+    if starting_soc is not None:
+        try:
+            starting_soc = float(starting_soc)
+        except ValueError:
+            starting_soc = None
+
+    rows = EnergyTracker.read_day(date_str)
+
+    # Include current hour data if simulating today
+    if date_str == datetime.date.today().isoformat() and energy_tracker.current_hour >= 0:
+        cur = energy_tracker.to_dict()
+        # Check if current hour is already in CSV rows
+        cur_hour_str = str(cur["hour"])
+        has_current = any(str(r.get("hour")) == cur_hour_str for r in rows)
+        if not has_current and cur["load_kwh"] > 0:
+            rows.append({
+                "hour": str(cur["hour"]),
+                "grid_kwh": str(cur["grid_kwh"]),
+                "load_kwh": str(cur["load_kwh"]),
+                "battery_charge_kwh": str(cur["battery_charge_kwh"]),
+                "battery_discharge_kwh": str(cur["battery_discharge_kwh"]),
+                "cost_cents": str(cur["cost_cents"]),
+                "avg_price_cents": str(cur["avg_price_cents"]),
+            })
+
+    thresholds = auto_thresholds.to_dict()
+    battery_avg = battery_pool.avg_cost_cents_kwh
+
+    result = simulate_day(
+        date_str, rows, thresholds,
+        starting_soc=starting_soc,
+        battery_avg_cost=battery_avg,
+    )
+    return json.dumps(result)
+
+
 # ─── Arbiter API ──────────────────────────────────────────────────────────
 
 @app.route("/api/state")

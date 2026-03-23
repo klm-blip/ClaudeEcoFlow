@@ -624,8 +624,10 @@ button:active{transform:scale(0.97)}
 </div>
 <div class="chart-section">
   <div class="chart-card">
-    <div class="section-title">Arbiter vs Manual Comparison</div>
-    <div id="arbiter-comparison" style="font-size:0.82rem;color:var(--dim)">Collecting data...</div>
+    <div class="section-title">Arbiter Simulation
+      <span id="sim-status" style="font-size:0.7rem;color:var(--dim);margin-left:8px"></span>
+    </div>
+    <div id="simulation-results" style="font-size:0.82rem;color:var(--dim)">Loading simulation...</div>
   </div>
 </div>
 <div class="chart-section">
@@ -1774,116 +1776,114 @@ function renderEnergyTable(hours, dateStr, arbiterHours) {
   }
   sumEl.innerHTML = summary;
 
-  // Arbiter comparison section
-  renderArbiterComparison(hours, arbiterHours, totalCost, totalGrid, totalLoad);
+  // Arbiter comparison section — fetch simulation
+  fetchSimulation(_energyDate);
 }
 
-function renderArbiterComparison(hours, arbiterHours, actualCost, totalGrid, totalLoad) {
-  const el = document.getElementById('arbiter-comparison');
-  if (!hours || !hours.length) { el.innerHTML = '<span style="color:var(--dim)">No data yet</span>'; return; }
-  const hasArbiter = Object.keys(arbiterHours).length > 0;
+async function fetchSimulation(dateStr) {
+  const el = document.getElementById('simulation-results');
+  const statusEl = document.getElementById('sim-status');
+  try {
+    statusEl.textContent = 'running...';
+    const resp = await fetch('/api/simulation?date=' + dateStr);
+    const data = await resp.json();
+    statusEl.textContent = '';
+    renderSimulation(data);
+  } catch(e) {
+    statusEl.textContent = '';
+    el.innerHTML = '<span style="color:var(--amber)">Simulation failed: ' + e.message + '</span>';
+  }
+}
 
-  // For each hour: compare what actually happened vs what Arbiter wanted
-  // "Missed savings" = hours where Arbiter said discharge but manual didn't,
-  //   times the price difference (grid_price - battery_cost)
-  // "Avoided loss" = hours where Arbiter said hold/backup but manual discharged at low spread
-  const tdRate = (state && state.thresholds && state.thresholds.td_rate_cents) || 8.5;
-  const battCost = (state && state.battery_cost && state.battery_cost.effective_cost_per_kwh) || 13;
+function renderSimulation(data) {
+  const el = document.getElementById('simulation-results');
+  if (!data || !data.hours || !data.hours.length) {
+    el.innerHTML = '<span style="color:var(--dim)">No energy data available for simulation</span>';
+    return;
+  }
+  const t = data.totals;
+  const hrs = data.hours;
 
-  let missedSavings = 0, missedHours = 0;
-  let avoidedLoss = 0, avoidedHours = 0;
-  let arbiterDischargeHours = 0, manualDischargeHours = 0;
+  // Summary cards
+  let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">';
 
-  hours.forEach(r => {
-    const h = parseInt(r.hour);
-    const dis = parseFloat(r.battery_discharge_kwh || 0);
-    const chg = parseFloat(r.battery_charge_kwh || 0);
-    const load = parseFloat(r.load_kwh || 0);
-    const avgPrice = parseFloat(r.avg_price_cents || 0); // energy-only avg for hour
-    const totalPrice = avgPrice + tdRate;
+  // Manual cost
+  html += '<div style="padding:8px;background:var(--panel2);border-radius:6px">';
+  html += '<div style="font-size:0.7rem;color:var(--dim)">Manual (Actual)</div>';
+  html += '<div style="font-size:1.1rem;font-weight:600">' + t.manual_cost.toFixed(1) + '\u00a2</div>';
+  html += '<div style="font-size:0.7rem;color:var(--dim)">' + t.manual_grid_kwh.toFixed(1) + ' kWh grid';
+  if (t.manual_avg_rate > 0) html += ' \u00b7 ' + t.manual_avg_rate.toFixed(1) + '\u00a2/kWh';
+  html += '</div></div>';
 
-    const arb = arbiterHours[String(h)];
-    if (!arb) return;
+  // Arbiter cost
+  html += '<div style="padding:8px;background:var(--panel2);border-radius:6px;border:1px solid var(--purple)">';
+  html += '<div style="font-size:0.7rem;color:var(--purple)">Arbiter (Simulated)</div>';
+  html += '<div style="font-size:1.1rem;font-weight:600;color:var(--purple)">' + t.arbiter_cost.toFixed(1) + '\u00a2</div>';
+  html += '<div style="font-size:0.7rem;color:var(--dim)">' + t.arbiter_grid_kwh.toFixed(1) + ' kWh grid';
+  if (t.arbiter_avg_rate > 0) html += ' \u00b7 ' + t.arbiter_avg_rate.toFixed(1) + '\u00a2/kWh';
+  html += '</div></div>';
+  html += '</div>';
 
-    let dashAction = 'hold';
-    if (dis > 0.05) dashAction = 'discharge';
-    else if (chg > 0.05) dashAction = 'charge';
-
-    const arbAction = arb.action;
-
-    if (dashAction === 'discharge') manualDischargeHours++;
-    if (arbAction === 'discharge') arbiterDischargeHours++;
-
-    // Arbiter wanted to discharge, manual didn't → missed savings
-    if (arbAction === 'discharge' && dashAction !== 'discharge') {
-      const potentialSaving = (totalPrice - battCost) * (load || 1);
-      if (potentialSaving > 0) {
-        missedSavings += potentialSaving;
-        missedHours++;
-      }
+  // Savings banner
+  const savings = t.savings_cents;
+  if (Math.abs(savings) > 0.5) {
+    const savingsColor = savings > 0 ? 'var(--green)' : 'var(--amber)';
+    const savingsLabel = savings > 0 ? 'Arbiter would save' : 'Arbiter would cost more';
+    html += '<div style="padding:6px 10px;background:var(--panel2);border-radius:6px;margin-bottom:10px;border-left:3px solid ' + savingsColor + '">';
+    html += '<span style="color:' + savingsColor + ';font-weight:600">' + savingsLabel + ': ' +
+      Math.abs(savings).toFixed(1) + '\u00a2</span>';
+    if (t.flat_rate_cost > 0) {
+      html += '<span style="color:var(--dim);font-size:0.7rem;margin-left:8px">(flat rate would be ' +
+        t.flat_rate_cost.toFixed(0) + '\u00a2)</span>';
     }
-
-    // Arbiter said hold/backup, manual discharged → potential avoided loss
-    if (arbAction !== 'discharge' && dashAction === 'discharge') {
-      const spread = totalPrice - battCost;
-      if (spread < 2) { // discharged at thin/negative spread
-        avoidedLoss += Math.abs(spread) * dis;
-        avoidedHours++;
-      }
-    }
-  });
-
-  let html = '';
-  if (!hasArbiter) {
-    html = '<span style="color:var(--dim)">Arbiter data not available for this date</span>';
+    html += '</div>';
   } else {
-    html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
-    html += '<div style="padding:6px;background:var(--panel2);border-radius:6px">';
-    html += '<div style="font-size:0.72rem;color:var(--dim)">Manual discharge hours</div>';
-    html += '<div style="font-size:1.1rem;font-weight:600">' + manualDischargeHours + '</div>';
-    html += '</div>';
-    html += '<div style="padding:6px;background:var(--panel2);border-radius:6px">';
-    html += '<div style="font-size:0.72rem;color:var(--dim)">Arbiter would discharge</div>';
-    html += '<div style="font-size:1.1rem;font-weight:600;color:var(--purple)">' + arbiterDischargeHours + '</div>';
-    html += '</div>';
-
-    if (missedHours > 0) {
-      html += '<div style="padding:6px;background:var(--panel2);border-radius:6px">';
-      html += '<div style="font-size:0.72rem;color:var(--dim)">Missed savings</div>';
-      html += '<div style="font-size:1.1rem;font-weight:600;color:var(--amber)">' +
-        missedSavings.toFixed(1) + '\u00a2 <span style="font-size:0.72rem;font-weight:400">(' +
-        missedHours + ' hrs)</span></div>';
-      html += '</div>';
-    }
-
-    if (avoidedHours > 0) {
-      html += '<div style="padding:6px;background:var(--panel2);border-radius:6px">';
-      html += '<div style="font-size:0.72rem;color:var(--dim)">Would avoid loss</div>';
-      html += '<div style="font-size:1.1rem;font-weight:600;color:var(--green)">' +
-        avoidedLoss.toFixed(1) + '\u00a2 <span style="font-size:0.72rem;font-weight:400">(' +
-        avoidedHours + ' hrs)</span></div>';
-      html += '</div>';
-    }
-
-    if (missedHours === 0 && avoidedHours === 0) {
-      if (manualDischargeHours === arbiterDischargeHours) {
-        html += '<div style="padding:6px;background:var(--panel2);border-radius:6px;grid-column:1/3">';
-        html += '<div style="color:var(--green);font-weight:600">Manual and Arbiter aligned — no missed opportunities</div>';
-        html += '</div>';
-      } else if (manualDischargeHours > arbiterDischargeHours) {
-        html += '<div style="padding:6px;background:var(--panel2);border-radius:6px;grid-column:1/3">';
-        html += '<div style="color:var(--amber);font-weight:600">You discharged ' + (manualDischargeHours - arbiterDischargeHours) +
-          ' more hour(s) than Arbiter would have — spread was OK so no loss</div>';
-        html += '</div>';
-      } else {
-        html += '<div style="padding:6px;background:var(--panel2);border-radius:6px;grid-column:1/3">';
-        html += '<div style="color:var(--amber);font-weight:600">Arbiter would have discharged ' + (arbiterDischargeHours - manualDischargeHours) +
-          ' more hour(s) — but no major savings missed</div>';
-        html += '</div>';
-      }
-    }
+    html += '<div style="padding:6px 10px;background:var(--panel2);border-radius:6px;margin-bottom:10px;border-left:3px solid var(--green)">';
+    html += '<span style="color:var(--green);font-weight:600">Manual and Arbiter costs are aligned</span>';
     html += '</div>';
   }
+
+  // SOC tracking
+  html += '<div style="padding:6px 10px;background:var(--panel2);border-radius:6px;margin-bottom:10px;font-size:0.75rem">';
+  html += '<span style="color:var(--dim)">Simulated battery: </span>';
+  html += '<span style="color:var(--text)">Start ' + t.starting_soc.toFixed(0) + '% \u2192 End ' + t.ending_soc.toFixed(0) + '%</span>';
+  html += '</div>';
+
+  // Hourly detail table
+  html += '<div style="overflow-x:auto"><table style="width:100%;font-size:0.72rem;border-collapse:collapse">';
+  html += '<tr style="color:var(--dim);border-bottom:1px solid var(--border)">';
+  html += '<th style="text-align:left;padding:3px 4px">Hr</th>';
+  html += '<th style="text-align:right;padding:3px 4px">Price</th>';
+  html += '<th style="text-align:right;padding:3px 4px">Load</th>';
+  html += '<th style="text-align:right;padding:3px 4px">Manual</th>';
+  html += '<th style="text-align:right;padding:3px 4px">Arbiter</th>';
+  html += '<th style="text-align:right;padding:3px 4px">SOC</th>';
+  html += '<th style="text-align:center;padding:3px 4px">Act</th>';
+  html += '</tr>';
+
+  const actionIcons = {discharge:'\u26a1',charge:'\ud83d\udd0b',backup:'\ud83d\udd0c',hold:'\u23f8'};
+  const actionColors = {discharge:'var(--discharge-amber)',charge:'var(--charge-green)',backup:'var(--blue)',hold:'var(--dim)'};
+
+  hrs.forEach(h => {
+    const hrLabel = h.hour < 12 ? (h.hour || 12) + 'a' : ((h.hour === 12 ? 12 : h.hour - 12) + 'p');
+    const diff = h.manual_cost - h.arbiter_cost;
+    const diffColor = diff > 0.5 ? 'var(--green)' : diff < -0.5 ? 'var(--amber)' : 'var(--dim)';
+    const icon = actionIcons[h.arbiter_action] || '?';
+    const color = actionColors[h.arbiter_action] || 'var(--dim)';
+
+    html += '<tr style="border-bottom:1px solid var(--border)">';
+    html += '<td style="padding:3px 4px">' + hrLabel + '</td>';
+    html += '<td style="text-align:right;padding:3px 4px">' + h.avg_price.toFixed(1) + '\u00a2</td>';
+    html += '<td style="text-align:right;padding:3px 4px">' + h.load_kwh.toFixed(2) + '</td>';
+    html += '<td style="text-align:right;padding:3px 4px">' + h.manual_cost.toFixed(1) + '\u00a2</td>';
+    html += '<td style="text-align:right;padding:3px 4px;color:var(--purple)">' + h.arbiter_cost.toFixed(1) + '\u00a2</td>';
+    html += '<td style="text-align:right;padding:3px 4px">' + h.arbiter_soc.toFixed(0) + '%</td>';
+    html += '<td style="text-align:center;padding:3px 4px;color:' + color + '" title="' +
+      (h.arbiter_reason||'').replace(/"/g,'&quot;') + '">' + icon + '</td>';
+    html += '</tr>';
+  });
+  html += '</table></div>';
+
   el.innerHTML = html;
 }
 

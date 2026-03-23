@@ -3,3 +3,4 @@ flask-sock>=0.7
 paho-mqtt>=2.0
 hyundai-kia-connect-api>=4.7.0
 pyenphase>=2.4
+requests>=2.31
