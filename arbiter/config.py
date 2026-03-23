@@ -51,7 +51,7 @@ WILLINGNESS_SOC_BANDS = [
 # ── Discharge Willingness — Time-of-day adjustments ────────────────────────
 # Positive = require MORE spread (less willing), Negative = require LESS (more willing)
 TIMING_EVENING_PEAK = float(os.environ.get("TIMING_EVENING_PEAK", "-1.0"))       # 5 PM - midnight
-TIMING_MORNING_PEAK = float(os.environ.get("TIMING_MORNING_PEAK", "-1.5"))       # 5-8 AM weekdays
+TIMING_MORNING_PEAK = float(os.environ.get("TIMING_MORNING_PEAK", "-1.0"))       # 5-8 AM weekdays
 TIMING_OVERNIGHT_CHEAP = float(os.environ.get("TIMING_OVERNIGHT_CHEAP", "3.0"))  # 1-5 AM
 
 # ── Target Rate ────────────────────────────────────────────────────────────
