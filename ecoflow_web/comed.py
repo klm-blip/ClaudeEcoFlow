@@ -169,17 +169,20 @@ class ComedPoller:
 
             if hour_avg is not None:
                 minute = now_dt.minute
-                # In first 10 min of the hour, check if hourly avg is stale
-                if (minute < 10
-                        and self._prev_hour_avg is not None
-                        and abs(hour_avg - self._prev_hour_avg) < 0.01):
-                    # Hourly avg unchanged — still reporting last hour's price.
-                    # Bridge with average of last 2 five-minute prices.
-                    last2 = [p for _, p in entries[:2]]
-                    if len(last2) >= 2:
-                        self.ps.effective_price = sum(last2) / len(last2)
-                        log.info("Hour-start bridge: using avg of last 2 5min prices (%.1f¢)",
-                                 self.ps.effective_price)
+                # In first 10 min of the hour, the hourly API often still reports
+                # last hour's stale average. Bridge with recent 5-min prices.
+                stale = (minute < 10
+                         and self._prev_hour_avg is not None
+                         and abs(hour_avg - self._prev_hour_avg) < 0.5)
+                if stale:
+                    # Use average of last 3 five-minute prices as bridge
+                    last3 = [p for _, p in entries[:3]]
+                    if len(last3) >= 2:
+                        bridge = sum(last3) / len(last3)
+                        self.ps.effective_price = bridge
+                        log.info("Hour-start bridge: using avg of last %d 5min prices (%.1f\u00a2) "
+                                 "— hourly API still reporting %.1f\u00a2 (prev hour)",
+                                 len(last3), bridge, hour_avg)
                     else:
                         self.ps.effective_price = current
                 else:
