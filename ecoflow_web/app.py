@@ -113,6 +113,23 @@ def api_energy():
     """Return hourly energy data for a given date."""
     date_str = request.args.get("date", datetime.date.today().isoformat())
     rows = EnergyTracker.read_day(date_str)
+
+    # Include current in-progress hour if viewing today
+    if date_str == datetime.date.today().isoformat() and energy_tracker.current_hour >= 0:
+        cur = energy_tracker.to_dict()
+        cur_hour_str = str(cur["hour"])
+        has_current = any(str(r.get("hour")) == cur_hour_str for r in rows)
+        if not has_current and cur["load_kwh"] > 0:
+            rows.append({
+                "hour": str(cur["hour"]),
+                "grid_kwh": str(round(cur["grid_kwh"], 3)),
+                "load_kwh": str(round(cur["load_kwh"], 3)),
+                "battery_charge_kwh": str(round(cur["battery_charge_kwh"], 3)),
+                "battery_discharge_kwh": str(round(cur["battery_discharge_kwh"], 3)),
+                "cost_cents": str(round(cur["cost_cents"], 2)),
+                "avg_price_cents": str(round(cur["avg_price_cents"], 2)),
+            })
+
     return json.dumps({"date": date_str, "hours": rows})
 
 

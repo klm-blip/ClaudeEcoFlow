@@ -486,6 +486,21 @@ button:active{transform:scale(0.97)}
 
     <div class="section-title desktop-only" style="margin-top:14px">Readings</div>
     <div id="readings-desktop" class="readings desktop-only"></div>
+
+    <div class="section-title" style="margin-top:14px">Telegram Alerts</div>
+    <div style="padding:6px 0">
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input type="text" id="tg-token" placeholder="Bot token" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem;font-family:var(--font-mono)">
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input type="text" id="tg-chatids" placeholder="Chat IDs (comma-separated)" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
+        <button onclick="saveTelegram()" style="background:var(--green);color:#000;padding:6px 12px;font-size:0.8rem">Save</button>
+        <button onclick="send({cmd:'telegram_test'})" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 12px;font-size:0.8rem">Test</button>
+      </div>
+      <div id="tg-status" style="font-size:0.75rem;color:var(--dim);margin-bottom:8px"></div>
+      <div class="section-title" style="font-size:0.8rem;margin-top:4px">Alert Events</div>
+      <div id="tg-events" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
+    </div>
   </div>
 </div>
 
@@ -651,25 +666,6 @@ button:active{transform:scale(0.97)}
 </div>
 </div>
 
-<!-- ═══ TELEGRAM (very bottom) ════════════════════════════════════════════ -->
-<div class="desktop-only">
-<div class="section-card" style="margin:8px">
-  <div class="section-title">Telegram Alerts</div>
-  <div style="padding:6px 0">
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <input type="text" id="tg-token" placeholder="Bot token" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem;font-family:var(--font-mono)">
-    </div>
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <input type="text" id="tg-chatids" placeholder="Chat IDs (comma-separated)" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
-      <button onclick="saveTelegram()" style="background:var(--green);color:#000;padding:6px 12px;font-size:0.8rem">Save</button>
-      <button onclick="send({cmd:'telegram_test'})" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 12px;font-size:0.8rem">Test</button>
-    </div>
-    <div id="tg-status" style="font-size:0.75rem;color:var(--dim);margin-bottom:8px"></div>
-    <div class="section-title" style="font-size:0.8rem;margin-top:4px">Alert Events</div>
-    <div id="tg-events" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
-  </div>
-</div>
-</div>
 
 <script>
 // ═══ WebSocket ═══════════════════════════════════════════════════════════
@@ -1785,8 +1781,22 @@ async function fetchSimulation(dateStr) {
   const statusEl = document.getElementById('sim-status');
   try {
     statusEl.textContent = 'running...';
-    const resp = await fetch('/api/simulation?date=' + dateStr);
-    const data = await resp.json();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const resp = await fetch('/api/simulation?date=' + dateStr, {signal: controller.signal});
+    clearTimeout(timeout);
+    if (!resp.ok) {
+      statusEl.textContent = '';
+      el.innerHTML = '<span style="color:var(--dim)">Simulation unavailable (HTTP ' + resp.status + ')</span>';
+      return;
+    }
+    const text = await resp.text();
+    if (!text || text.startsWith('<')) {
+      statusEl.textContent = '';
+      el.innerHTML = '<span style="color:var(--dim)">No simulation data</span>';
+      return;
+    }
+    const data = JSON.parse(text);
     statusEl.textContent = '';
     if (data.error) {
       el.innerHTML = '<span style="color:var(--amber)">Simulation error: ' + data.error + '</span>';
@@ -1795,7 +1805,11 @@ async function fetchSimulation(dateStr) {
     renderSimulation(data);
   } catch(e) {
     statusEl.textContent = '';
-    el.innerHTML = '<span style="color:var(--amber)">Simulation failed: ' + e.message + '</span>';
+    if (e.name === 'AbortError') {
+      el.innerHTML = '<span style="color:var(--dim)">Simulation timed out</span>';
+    } else {
+      el.innerHTML = '<span style="color:var(--amber)">Simulation failed: ' + e.message + '</span>';
+    }
   }
 }
 
