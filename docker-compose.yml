@@ -3,8 +3,7 @@ services:
     build: .
     container_name: ecoflow-dashboard
     restart: unless-stopped
-    ports:
-      - "5000:5000"
+    network_mode: host
     environment:
       - TZ=America/Chicago
     volumes:
@@ -15,8 +14,6 @@ services:
       - /home/pi/automation_data/kia_credentials.txt:/app/kia_credentials.txt:ro
       - /home/pi/automation_data/kia_token.json:/app/kia_token.json
       - /home/pi/automation_data/enphase_credentials.txt:/app/enphase_credentials.txt:ro
-    networks:
-      - ecoflow-net
 
   arbiter:
     build:
@@ -24,9 +21,10 @@ services:
       dockerfile: Dockerfile.arbiter
     container_name: arbiter
     restart: unless-stopped
+    network_mode: host
     environment:
       - TZ=America/Chicago
-      - DASHBOARD_URL=http://ecoflow-dashboard:5000
+      - DASHBOARD_URL=http://localhost:5000
       - ARBITER_DRY_RUN=true
       - ARBITER_POLL_INTERVAL=30
       - TD_RATE=8.5
@@ -36,11 +34,5 @@ services:
       - SPIKE_OVERRIDE_TOTAL_PRICE=23.5
     volumes:
       - /home/pi/automation_data/logs:/app/logs
-    networks:
-      - ecoflow-net
     depends_on:
       - ecoflow-dashboard
-
-networks:
-  ecoflow-net:
-    driver: bridge
