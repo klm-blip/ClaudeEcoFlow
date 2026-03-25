@@ -293,6 +293,12 @@ button:active{transform:scale(0.97)}
   <span id="arbiter-text" style="color:var(--dim)">Arbiter: waiting for data&hellip;</span>
 </div>
 
+<!-- Trend Alert Strip -->
+<div id="trend-alert-strip" class="auto-strip" style="margin-top:4px;border-color:var(--amber,#f0a500);display:none">
+  <div class="auto-dot on" style="background:var(--amber,#f0a500)"></div>
+  <span id="trend-alert-text" style="color:var(--amber)">Trend alert active</span>
+</div>
+
 <!-- Readings (mobile shows here, desktop in two-col) -->
 <div class="mobile-only" style="padding:8px">
   <div class="section-card">
@@ -394,6 +400,33 @@ button:active{transform:scale(0.97)}
         <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('glide_minutes',-1)">−</button>
         <span class="adj-value" id="adj-glide_minutes" style="display:inline-block;min-width:50px">5m</span>
         <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('glide_minutes',1)">+</button>
+      </span>
+    </div>
+
+    <!-- Trend Alert (early discharge) -->
+    <div class="section-title" style="margin-top:10px">Trend Alert</div>
+    <div style="font-size:0.73rem;color:var(--dim);margin-bottom:4px">Early discharge when consecutive 5-min prices are elevated</div>
+    <div class="discharge-row" style="font-size:0.78rem">
+      <span>Enabled</span>
+      <span>
+        <button id="btn-trend-on" class="mode-btn" style="padding:3px 10px;font-size:0.75rem" onclick="send({cmd:'set_threshold',key:'trend_alert_enabled',value:true})">ON</button>
+        <button id="btn-trend-off" class="mode-btn" style="padding:3px 10px;font-size:0.75rem" onclick="send({cmd:'set_threshold',key:'trend_alert_enabled',value:false})">OFF</button>
+      </span>
+    </div>
+    <div class="discharge-row" style="margin-top:4px">
+      <span>5-min threshold</span>
+      <span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('trend_alert_threshold',-1)">−</button>
+        <span class="adj-value" id="adj-trend_alert_threshold" style="display:inline-block;min-width:50px">8c</span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('trend_alert_threshold',1)">+</button>
+      </span>
+    </div>
+    <div class="discharge-row" style="margin-top:4px">
+      <span>Consecutive readings</span>
+      <span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('trend_alert_count',-1)">−</button>
+        <span class="adj-value" id="adj-trend_alert_count" style="display:inline-block;min-width:50px">3</span>
+        <button class="adj-btn" style="width:28px;height:28px;font-size:0.85rem;display:inline-flex" onclick="adjThreshold('trend_alert_count',1)">+</button>
       </span>
     </div>
 
@@ -721,6 +754,7 @@ function adjThreshold(key, delta) {
     emergency_charge_below:[-5,30],
     low_rate:[600,12000], mid_rate:[600,12000], high_rate:[600,12000], rate_emergency:[600,12000],
     td_rate_cents:[0,30], glide_minutes:[0,15], outage_reserve_pct:[10,80],
+    trend_alert_threshold:[3,25], trend_alert_count:[2,6],
     kia_soak_below:[-5,10], kia_normal_below:[0,20],
     kia_ac_limit_soak:[50,100], kia_ac_limit_normal:[50,100]
   };
@@ -1091,6 +1125,17 @@ function render() {
     arbTxt.textContent = 'Arbiter: waiting for data\u2026';
   }
 
+  // ─── Trend alert strip ──────────────────────────────────────────────
+  const trendStrip = document.getElementById('trend-alert-strip');
+  const trendText = document.getElementById('trend-alert-text');
+  if (trendStrip && state.price && state.price.trend_alert) {
+    trendStrip.style.display = '';
+    const min5 = state.price.price_5min != null ? state.price.price_5min.toFixed(1) + '\u00a2' : '?';
+    trendText.textContent = '\u26a0 Trend alert: consecutive 5-min prices elevated (latest ' + min5 + ') \u2014 early discharge active';
+  } else if (trendStrip) {
+    trendStrip.style.display = 'none';
+  }
+
   // ─── Mode buttons ─────────────────────────────────────────────────
   document.getElementById('btn-backup').className = 'mode-btn' + (p.op_mode === 1 ? ' active' : '');
   document.getElementById('btn-selfpwr').className = 'mode-btn' + (p.op_mode === 2 ? ' active' : '');
@@ -1430,6 +1475,19 @@ function updateThresholds(t, soc) {
   setAdj('discharge_above', t.discharge_above.toFixed(1), 'c');
   setAdj('td_rate_cents', (t.td_rate_cents || 0).toFixed(1), 'c');
   setAdj('glide_minutes', Math.round(t.glide_minutes || 0), 'm');
+
+  // Trend alert controls
+  setAdj('trend_alert_threshold', Math.round(t.trend_alert_threshold || 8), 'c');
+  setAdj('trend_alert_count', t.trend_alert_count || 3, '');
+  const trendOn = document.getElementById('btn-trend-on');
+  const trendOff = document.getElementById('btn-trend-off');
+  if (trendOn && trendOff) {
+    const enabled = t.trend_alert_enabled !== false;
+    trendOn.style.background = enabled ? 'var(--green)' : 'var(--panel2)';
+    trendOn.style.color = enabled ? '#000' : 'var(--text)';
+    trendOff.style.background = enabled ? 'var(--panel2)' : 'var(--red)';
+    trendOff.style.color = enabled ? 'var(--text)' : '#fff';
+  }
 
   // Outage reserve slider
   const orSlider = document.getElementById('slider-outage-reserve');

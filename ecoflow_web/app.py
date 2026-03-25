@@ -58,6 +58,7 @@ enphase_poller  = None    # set in main() if credentials exist
 commands_live   = True    # LIVE commands by default (production)
 command_log     = []      # [{ts, live, text}, ...] last 30 entries
 mqtt_handler    = None    # set in main()
+comed_poller    = None    # set in main()
 
 # Arbiter state (updated by POST /api/arbiter/action)
 arbiter_state   = {"action": None, "reason": "Waiting for Arbiter...", "dry_run": True, "ts": 0}
@@ -484,6 +485,11 @@ def _handle_command(data: dict):
                 pass  # max_soc IS the high band ceiling — nothing else to sync
             thresholds.save()
             _log_command(f"THRESHOLD {key} → {val}")
+            # Sync trend alert settings to poller if changed
+            if key.startswith("trend_alert_") and comed_poller is not None:
+                comed_poller.trend_alert_threshold = thresholds.trend_alert_threshold
+                comed_poller.trend_alert_count = thresholds.trend_alert_count
+                comed_poller.trend_alert_enabled = thresholds.trend_alert_enabled
             # Trigger immediate automation re-evaluation
             if auto.enabled:
                 _run_automation()
@@ -840,8 +846,12 @@ def main():
     log.info("MQTT handler started")
 
     # Start ComEd poller
-    comed = ComedPoller(price_state, _on_price_update)
-    comed.start()
+    global comed_poller
+    comed_poller = ComedPoller(price_state, _on_price_update)
+    comed_poller.trend_alert_threshold = thresholds.trend_alert_threshold
+    comed_poller.trend_alert_count = thresholds.trend_alert_count
+    comed_poller.trend_alert_enabled = thresholds.trend_alert_enabled
+    comed_poller.start()
     log.info("ComEd poller started")
 
     # Start Enphase poller (if credentials exist)

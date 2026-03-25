@@ -69,6 +69,8 @@ class PriceState:
     tier_color:       str             = "#8b949e"
     history_5min:     list            = field(default_factory=list)
     price_5min_ts:    Optional[float] = None   # unix timestamp of latest 5-min price
+    trend_alert:      bool            = False  # True when consecutive 5-min prices signal expensive hour
+    trend_alert_minute: Optional[int] = None   # minute within the hour when alert fired
     last_update:      float           = 0.0
     error:            str             = ""
 
@@ -88,6 +90,8 @@ class PriceState:
             "tier_color":       self.tier_color,
             "history_5min":     self.history_5min,
             "price_5min_ts":    self.price_5min_ts,
+            "trend_alert":      self.trend_alert,
+            "trend_alert_minute": self.trend_alert_minute,
             "error":            self.error,
         }
 

@@ -44,6 +44,38 @@ def price_trend(entries: list, n=6) -> tuple:
     else:              return "flat",    round(slope, 3)
 
 
+def detect_trend_alert(entries: list, threshold: float = 8.0,
+                       consecutive: int = 3) -> tuple:
+    """Check if the last N 5-minute readings are all above threshold.
+
+    This detects sustained price elevations mid-hour that predict the full
+    hour will be expensive — before the hourly average crosses the discharge
+    threshold.
+
+    Args:
+        entries: [(timestamp, price), ...] newest first
+        threshold: price in cents above which a reading is "elevated"
+        consecutive: how many consecutive elevated readings needed
+
+    Returns:
+        (alert_fired: bool, minute_of_hour: int or None)
+    """
+    if len(entries) < consecutive:
+        return False, None
+
+    # Check the N most recent readings (newest first)
+    recent = entries[:consecutive]
+    all_above = all(price >= threshold for _, price in recent)
+
+    if all_above:
+        # The oldest reading in the window tells us when the trend started
+        oldest_ts = recent[-1][0]
+        minute = datetime.datetime.fromtimestamp(oldest_ts).minute
+        return True, minute
+
+    return False, None
+
+
 class ComedPoller:
     """Polls ComEd APIs in a background thread every COMED_POLL_SECONDS."""
 
@@ -53,6 +85,7 @@ class ComedPoller:
         self._stop           = threading.Event()
         self._prev_hour_avg  = None   # last confirmed hourly avg (for stale detection)
         self._current_hour   = -1     # hour number when _prev_hour_avg was set
+        self._alert_hour     = -1     # hour when trend alert last fired (reset each hour)
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
@@ -100,6 +133,27 @@ class ComedPoller:
                 self.ps.running_hour_avg = sum(last4) / len(last4)
             else:
                 self.ps.running_hour_avg = hour_avg
+
+            # Trend alert: detect consecutive elevated 5-min prices
+            # Configurable via thresholds (trend_alert_threshold, trend_alert_count)
+            alert_thresh = getattr(self, 'trend_alert_threshold', 8.0)
+            alert_count = getattr(self, 'trend_alert_count', 3)
+            alert_enabled = getattr(self, 'trend_alert_enabled', True)
+
+            now_hour = datetime.datetime.now().hour
+            if now_hour != self._alert_hour:
+                # New hour — reset alert (hourly avg resets, new billing period)
+                self.ps.trend_alert = False
+                self.ps.trend_alert_minute = None
+                self._alert_hour = now_hour
+
+            if alert_enabled:
+                fired, minute = detect_trend_alert(entries, alert_thresh, alert_count)
+                if fired and not self.ps.trend_alert:
+                    self.ps.trend_alert = True
+                    self.ps.trend_alert_minute = minute
+                    log.info("TREND ALERT: %d consecutive 5-min prices >= %.1f\u00a2 (minute %s)",
+                             alert_count, alert_thresh, minute)
 
             # Effective price = ComEd hourly average (what BESH actually bills on).
             # At hour boundaries (minutes 0-9), the hourly API may still report
