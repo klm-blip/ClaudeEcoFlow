@@ -18,5 +18,17 @@
   "kia_normal_below": 2.5,
   "kia_ac_limit_soak": 100,
   "kia_ac_limit_normal": 80,
-  "kia_dc_limit": 80
+  "kia_dc_limit": 80,
+  "telegram_bot_token": "8657813037:AAFaLQAFSkYLluWgw_Wwg54wStwq-yj3-IM",
+  "telegram_chat_ids": ["-5159044430"],
+  "telegram_events": {
+    "mode_self_powered": true,
+    "mode_backup": true,
+    "charge_start": false,
+    "charge_stop": false,
+    "grid_outage": true,
+    "price_spike": true,
+    "kia_charge_start": false,
+    "kia_charge_stop": false
+  }
 }
