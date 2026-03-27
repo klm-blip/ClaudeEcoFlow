@@ -223,57 +223,66 @@ def simulate_day(date_str: str, energy_rows: list, thresholds: dict,
             "arbiter_soc": round(sim_soc, 1),
         })
 
-    # ── Refill cost: bring simulated battery to actual system SOC ──────
-    # If the Arbiter used more battery than manual, it needs to refill
-    # more — that future grid cost should be counted.
-    # If the Arbiter used less (held battery), it would need less refill.
-    # Use actual ending SOC as the target (apples-to-apples).
-    refill_cost = 0.0
-    refill_kwh = 0.0
-    soc_gap = 0.0
+    # ── SOC normalization: bring BOTH sides to same reference SOC ───────
+    # Both manual and Arbiter started at starting_soc. They end at different
+    # SOC levels. To compare fairly, we charge both back to starting_soc
+    # using a realistic refill price:
+    #   Refill total cost = ~2¢ energy + 8.5¢ T&D = 10.5¢/kWh from grid
+    #   Grid kWh per stored kWh = 1 / charge_efficiency (0.9)
+    #   So refill cost = 10.5 / 0.9 = 11.67¢ per kWh stored in battery
+    EST_REFILL_RATE = (2.0 + arb_config.TD_RATE) / CHARGE_EFFICIENCY  # ~11.67¢/kWh stored
+
+    def _soc_refill_cost(ending_soc, reference_soc):
+        """Cost to refill from ending_soc to reference_soc. Positive = needs refill."""
+        gap_pct = reference_soc - ending_soc
+        if abs(gap_pct) < 0.5:
+            return 0.0, 0.0, 0.0  # close enough
+        kwh_stored = (gap_pct / 100) * BATTERY_CAPACITY_KWH
+        grid_kwh = kwh_stored / CHARGE_EFFICIENCY
+        cost = grid_kwh * (2.0 + arb_config.TD_RATE)  # grid cost at refill rate
+        return gap_pct, grid_kwh, cost
+
+    # Manual: actual system went from starting_soc → actual_ending_soc
+    manual_refill_cost = 0.0
+    manual_refill_kwh = 0.0
+    manual_soc_gap = 0.0
     if actual_ending_soc is not None:
-        soc_gap = actual_ending_soc - sim_soc  # positive = Arbiter needs to buy more
-        if soc_gap > 0:
-            # Arbiter's battery is lower — estimate refill cost
-            # kWh needed from grid = (soc_gap% × capacity) / charge_efficiency
-            refill_kwh = (soc_gap / 100) * BATTERY_CAPACITY_KWH / CHARGE_EFFICIENCY
-            # Estimate refill price: use avg of cheapest hours seen today
-            # NOTE: avg_price already includes T&D, so no need to add it
-            cheap_prices = sorted([h["avg_price"] for h in hours if h["avg_price"] > 0])[:4]
-            if cheap_prices:
-                est_refill_total = sum(cheap_prices) / len(cheap_prices)
-            else:
-                est_refill_total = 10.5  # fallback: ~2¢ energy + 8.5¢ T&D
-            refill_cost = refill_kwh * est_refill_total
-        elif soc_gap < 0:
-            # Arbiter has MORE battery than actual — credit the saved energy
-            # (it won't need to charge as much next cycle)
-            saved_kwh = (abs(soc_gap) / 100) * BATTERY_CAPACITY_KWH / CHARGE_EFFICIENCY
-            cheap_prices = sorted([h["avg_price"] for h in hours if h["avg_price"] > 0])[:4]
-            if cheap_prices:
-                est_total = sum(cheap_prices) / len(cheap_prices)
-            else:
-                est_total = 10.5
-            refill_cost = -(saved_kwh * est_total)
-            refill_kwh = -saved_kwh
+        manual_soc_gap, manual_refill_kwh, manual_refill_cost = \
+            _soc_refill_cost(actual_ending_soc, starting_soc)
+
+    # Arbiter: simulation went from starting_soc → sim_soc
+    arbiter_refill_cost = 0.0
+    arbiter_refill_kwh = 0.0
+    arbiter_soc_gap = 0.0
+    arbiter_soc_gap, arbiter_refill_kwh, arbiter_refill_cost = \
+        _soc_refill_cost(sim_soc, starting_soc)
 
     # ── Totals ──────────────────────────────────────────────────────────
-    arbiter_total_with_refill = total_arbiter_cost + refill_cost
-    savings = total_manual_cost - arbiter_total_with_refill
+    manual_total_normalized = total_manual_cost + manual_refill_cost
+    arbiter_total_normalized = total_arbiter_cost + arbiter_refill_cost
+    savings = manual_total_normalized - arbiter_total_normalized
     # TARGET_ENERGY_RATE is energy-only (9.5¢), need to add T&D for total
     flat_rate_cost = total_manual_grid_kwh * (arb_config.TARGET_ENERGY_RATE + arb_config.TD_RATE)
+
+    # Legacy field names kept for UI compat
+    refill_cost = arbiter_refill_cost
+    refill_kwh = arbiter_refill_kwh
+    soc_gap = arbiter_soc_gap
 
     totals = {
         "manual_cost": round(total_manual_cost, 2),
         "manual_grid_kwh": round(total_manual_grid_kwh, 3),
         "manual_avg_rate": round(total_manual_cost / total_manual_grid_kwh, 2) if total_manual_grid_kwh > 0 else 0,
+        "manual_refill_cost": round(manual_refill_cost, 2),
+        "manual_refill_soc_gap": round(manual_soc_gap, 1),
+        "manual_total_normalized": round(manual_total_normalized, 2),
         "arbiter_cost": round(total_arbiter_cost, 2),
         "arbiter_grid_kwh": round(total_arbiter_grid_kwh, 3),
         "arbiter_avg_rate": round(total_arbiter_cost / total_arbiter_grid_kwh, 2) if total_arbiter_grid_kwh > 0 else 0,
         "refill_soc_gap": round(soc_gap, 1),
         "refill_kwh": round(refill_kwh, 2),
         "refill_cost": round(refill_cost, 2),
-        "arbiter_total_with_refill": round(arbiter_total_with_refill, 2),
+        "arbiter_total_with_refill": round(arbiter_total_normalized, 2),
         "savings_cents": round(savings, 2),
         "flat_rate_cost": round(flat_rate_cost, 2),
         "starting_soc": round(starting_soc, 1),

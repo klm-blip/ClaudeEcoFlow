@@ -71,38 +71,54 @@ class EnphasePoller:
 
         log.info("Enphase: connecting to Envoy at %s", host)
 
-        try:
-            self._envoy = Envoy(host)
-            await self._envoy.setup()
-            await self._envoy.authenticate(username=email, password=password)
-            log.info("Enphase: authenticated successfully")
-        except Exception as e:
-            log.error("Enphase: auth failed: %s", e)
-            self.state.error = str(e)
-            if self._on_update:
-                self._on_update()
-            return
-
+        backoff = 30  # seconds between auth retries, increases on failure
         while True:
+            # ── Connect and authenticate ──────────────────────────────
             try:
-                data = await self._envoy.update()
-                self._process_data(data)
+                self._envoy = Envoy(host)
+                await self._envoy.setup()
+                await self._envoy.authenticate(username=email, password=password)
+                log.info("Enphase: authenticated successfully")
                 self.state.error = ""
+                backoff = 30  # reset on success
             except Exception as e:
-                log.warning("Enphase: poll error: %s", e)
+                log.error("Enphase: auth failed: %s (retry in %ds)", e, backoff)
                 self.state.error = str(e)
-                # Try to re-auth on failure
+                if self._on_update:
+                    self._on_update()
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 600)  # cap at 10 minutes
+                continue
+
+            # ── Poll loop ─────────────────────────────────────────────
+            consecutive_errors = 0
+            while True:
                 try:
-                    await self._envoy.setup()
-                    await self._envoy.authenticate(username=email, password=password)
-                    log.info("Enphase: re-authenticated after error")
-                except Exception as e2:
-                    log.error("Enphase: re-auth failed: %s", e2)
+                    data = await self._envoy.update()
+                    self._process_data(data)
+                    self.state.error = ""
+                    consecutive_errors = 0
+                except Exception as e:
+                    consecutive_errors += 1
+                    log.warning("Enphase: poll error (%d): %s", consecutive_errors, e)
+                    self.state.error = str(e)
 
-            if self._on_update:
-                self._on_update()
+                    if consecutive_errors >= 5:
+                        log.error("Enphase: %d consecutive errors, re-authenticating", consecutive_errors)
+                        break  # break inner loop → re-auth in outer loop
 
-            await asyncio.sleep(ENPHASE_POLL_SECONDS)
+                    # Try to re-auth in place for transient errors
+                    try:
+                        await self._envoy.setup()
+                        await self._envoy.authenticate(username=email, password=password)
+                        log.info("Enphase: re-authenticated after error")
+                    except Exception as e2:
+                        log.error("Enphase: re-auth failed: %s", e2)
+
+                if self._on_update:
+                    self._on_update()
+
+                await asyncio.sleep(ENPHASE_POLL_SECONDS)
 
     def _process_data(self, data):
         """Extract production/consumption from pyenphase data."""

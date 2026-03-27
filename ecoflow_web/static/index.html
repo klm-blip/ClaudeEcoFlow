@@ -755,7 +755,7 @@ function adjThreshold(key, delta) {
     low_rate:[600,12000], mid_rate:[600,12000], high_rate:[600,12000], rate_emergency:[600,12000],
     td_rate_cents:[0,30], glide_minutes:[0,15], outage_reserve_pct:[10,80],
     trend_alert_threshold:[3,25], trend_alert_count:[2,6],
-    kia_soak_below:[-5,10], kia_normal_below:[0,20],
+    kia_soak_below:[-5,10], kia_normal_below:[-5,20],
     kia_ac_limit_soak:[50,100], kia_ac_limit_normal:[50,100]
   };
   if (clamps[key]) { val = Math.max(clamps[key][0], Math.min(clamps[key][1], val)); }
@@ -1883,12 +1883,17 @@ function renderSimulation(data) {
   // Summary cards
   let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">';
 
-  // Manual cost
+  // Manual cost (normalized = grid cost + refill to starting SOC)
+  const manualTotal = t.manual_total_normalized != null ? t.manual_total_normalized : t.manual_cost;
   html += '<div style="padding:8px;background:var(--panel2);border-radius:6px">';
   html += '<div style="font-size:0.7rem;color:var(--dim)">Manual (Actual)</div>';
-  html += '<div style="font-size:1.1rem;font-weight:600">' + t.manual_cost.toFixed(1) + '\u00a2</div>';
+  html += '<div style="font-size:1.1rem;font-weight:600">' + manualTotal.toFixed(1) + '\u00a2</div>';
   html += '<div style="font-size:0.7rem;color:var(--dim)">' + t.manual_grid_kwh.toFixed(1) + ' kWh grid';
   if (t.manual_avg_rate > 0) html += ' \u00b7 ' + t.manual_avg_rate.toFixed(1) + '\u00a2/kWh';
+  if (t.manual_refill_cost && Math.abs(t.manual_refill_cost) > 0.1) {
+    html += '<br>incl ' + (t.manual_refill_cost > 0 ? '+' : '') + t.manual_refill_cost.toFixed(1) + '\u00a2 refill (' +
+      Math.abs(t.manual_refill_soc_gap).toFixed(0) + '% SOC)';
+  }
   html += '</div></div>';
 
   // Arbiter cost (with refill)
@@ -1923,15 +1928,13 @@ function renderSimulation(data) {
     html += '</div>';
   }
 
-  // SOC tracking
+  // SOC tracking — both sides normalize to starting SOC
   html += '<div style="padding:6px 10px;background:var(--panel2);border-radius:6px;margin-bottom:10px;font-size:0.75rem">';
-  html += '<span style="color:var(--dim)">Sim battery (avg cost ' + (t.battery_cost_used || 0).toFixed(1) + '\u00a2): </span>';
-  html += '<span style="color:var(--text)">Start ' + t.starting_soc.toFixed(0) + '% \u2192 End ' + t.ending_soc.toFixed(0) + '%</span>';
+  html += '<span style="color:var(--dim)">Both normalized to start SOC ' + t.starting_soc.toFixed(0) + '% (refill @ ~11.7\u00a2/kWh)</span>';
+  html += '<br><span style="color:var(--dim)">Arbiter: </span>';
+  html += '<span style="color:var(--text)">End ' + t.ending_soc.toFixed(0) + '%</span>';
   if (t.actual_ending_soc != null) {
-    html += '<span style="color:var(--dim)"> | Actual: ' + t.actual_ending_soc.toFixed(0) + '%</span>';
-    const gap = t.refill_soc_gap;
-    if (gap > 1) html += '<span style="color:var(--amber)"> (' + gap.toFixed(0) + '% to refill)</span>';
-    else if (gap < -1) html += '<span style="color:var(--green)"> (' + Math.abs(gap).toFixed(0) + '% ahead)</span>';
+    html += '<span style="color:var(--dim)"> | Manual: End ' + t.actual_ending_soc.toFixed(0) + '%</span>';
   }
   html += '</div>';
 

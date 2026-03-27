@@ -34,6 +34,7 @@ from .proto_codec import (
 from . import logger
 from .notify import TelegramNotifier
 from .battery_cost import BatteryCostPool
+from .battery_monitor import BatteryMonitor
 from .energy_tracker import EnergyTracker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -65,6 +66,7 @@ arbiter_state   = {"action": None, "reason": "Waiting for Arbiter...", "dry_run"
 notifier        = TelegramNotifier()
 battery_pool    = BatteryCostPool()
 energy_tracker  = EnergyTracker()
+battery_monitor = BatteryMonitor()
 _state_lock     = threading.Lock()
 _pool_initialized = False  # set True after first SOC-based init
 
@@ -157,6 +159,13 @@ def api_energy_dates():
     """Return list of dates with energy data."""
     return json.dumps({"dates": EnergyTracker.available_dates()})
 
+
+# ─── Battery Monitor API ─────────────────────────────────────────────────
+
+@app.route("/api/battery_monitor")
+def api_battery_monitor():
+    """Return battery monitor aggregate stats."""
+    return jsonify(battery_monitor.to_dict())
 
 # ─── Simulation API ──────────────────────────────────────────────────────
 
@@ -744,6 +753,8 @@ def _on_telemetry_update():
         # cost of energy going into the battery
         total_cost = ep + (thresholds.td_rate_cents or 0)
         battery_pool.update(bw, total_cost, soc)
+        if soc is not None:
+            battery_monitor.update(bw, soc)
         energy_tracker.update(
             power_state.grid_w or 0.0,
             power_state.load_w or 0.0,
@@ -776,6 +787,7 @@ def _save_runtime_state():
     state = {
         "battery_pool": battery_pool.save_state(),
         "energy_hour": energy_tracker.save_state(),
+        "battery_monitor": battery_monitor.save_state(),
     }
     try:
         with _state_lock:
@@ -794,6 +806,7 @@ def _load_runtime_state():
             state = json.load(f)
         battery_pool.load_state(state.get("battery_pool"))
         energy_tracker.load_state(state.get("energy_hour"))
+        battery_monitor.load_state(state.get("battery_monitor"))
     except Exception as e:
         log.warning("Failed to load runtime state: %s", e)
 
