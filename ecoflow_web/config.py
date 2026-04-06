@@ -11,7 +11,7 @@ log = logging.getLogger("ecoflow")
 # ─── Device identifiers ────────────────────────────────────────────────────
 MQTT_HOST   = "mqtt-a.ecoflow.com"
 MQTT_PORT   = 8883
-GATEWAY_SN  = "HR65ZA1AVH7J0027"
+GATEWAY_SN  = "HR65ZA1AVH960047"
 INVERTER_SN = "P101ZA1A9HA70164"
 
 # ─── Timing ─────────────────────────────────────────────────────────────────
