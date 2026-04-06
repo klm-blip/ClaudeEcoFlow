@@ -602,8 +602,81 @@ def websocket(ws):
 
 # ─── Automation ─────────────────────────────────────────────────────────────
 
+# Pending command verification: dict with keys
+#   sent_ts, expected_mode, expected_charging (bool|None), retried (bool), payloads (list[bytes]), reason
+_pending_verify = None
+VERIFY_DELAY_SECS = 45  # how long to wait before checking telemetry
+
+
+def _check_command_verification():
+    """If a command was recently sent, verify the device actually complied.
+    On mismatch: force MQTT reconnect, retry once. On second failure: alert."""
+    global _pending_verify
+    if not _pending_verify:
+        return
+    pv = _pending_verify
+    age = time.time() - pv["sent_ts"]
+    if age < VERIFY_DELAY_SECS:
+        return
+    # Need fresh telemetry
+    if power_state.stale or power_state.last_update < pv["sent_ts"]:
+        if age > VERIFY_DELAY_SECS * 3:
+            log.warning("CMD VERIFY: no telemetry update since send (%.0fs) — clearing", age)
+            _pending_verify = None
+        return
+
+    expected_mode = pv["expected_mode"]
+    expected_charging = pv["expected_charging"]
+    mode_ok = (expected_mode is None) or (power_state.op_mode == expected_mode)
+    charge_ok = (expected_charging is None) or (power_state.battery_charging == expected_charging)
+
+    if mode_ok and charge_ok:
+        log.info("CMD VERIFY OK: mode=%s charging=%s", power_state.op_mode, power_state.battery_charging)
+        _pending_verify = None
+        return
+
+    # Mismatch
+    detail = (f"expected mode={expected_mode} charging={expected_charging}, "
+              f"got mode={power_state.op_mode} charging={power_state.battery_charging}")
+    if not pv["retried"]:
+        log.warning("CMD VERIFY MISMATCH: %s — forcing MQTT reconnect + retry", detail)
+        try:
+            mqtt_handler.reconnect()
+        except Exception as e:
+            log.error("reconnect failed: %s", e)
+        # Republish original payloads
+        for p in pv["payloads"]:
+            try:
+                mqtt_handler.publish_command(p, commands_live)
+            except Exception as e:
+                log.error("retry publish failed: %s", e)
+        pv["retried"] = True
+        pv["sent_ts"] = time.time()
+    else:
+        log.error("CMD VERIFY FAILED after retry: %s (%s)", detail, pv["reason"])
+        notifier.notify("price_spike",  # reuse an existing event channel
+            f"⚠️ <b>Command not honored</b>\n{pv['reason']}\n{detail}")
+        _pending_verify = None
+
+
+def _arm_verification(expected_mode, expected_charging, payloads, reason):
+    """Record a pending verification after sending command(s)."""
+    global _pending_verify
+    if not commands_live:
+        return
+    _pending_verify = {
+        "sent_ts": time.time(),
+        "expected_mode": expected_mode,
+        "expected_charging": expected_charging,
+        "retried": False,
+        "payloads": list(payloads),
+        "reason": reason,
+    }
+
+
 def _run_automation():
     """Evaluate automation decision and execute if appropriate."""
+    _check_command_verification()
     mode, rate, reason = auto.decide(price_state, power_state, thresholds)
 
     ok, why = auto.should_send(mode, rate)
@@ -626,6 +699,7 @@ def _run_automation():
         p = build_and_wrap(build_mode_command(self_powered=True))
         mqtt_handler.publish_command(p, commands_live)
         _log_command(f"AUTO: {reason}")
+        _arm_verification(expected_mode=2, expected_charging=False, payloads=[p], reason=reason)
         # Notify: mode → Self-Powered
         if prev_mode != 2 and commands_live:
             ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
@@ -643,6 +717,8 @@ def _run_automation():
             p2 = build_and_wrap(build_charge_power_command(rate, int(thresholds.max_soc)))
             mqtt_handler.publish_command(p2, commands_live)
             _log_command(f"AUTO: {reason}")
+            _arm_verification(expected_mode=1, expected_charging=True,
+                              payloads=[p, p1, p2], reason=reason)
             # Notify: charge started
             if commands_live:
                 ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
@@ -653,6 +729,8 @@ def _run_automation():
             p1 = build_and_wrap(build_charge_command(False))
             mqtt_handler.publish_command(p1, commands_live)
             _log_command(f"AUTO: {reason}")
+            _arm_verification(expected_mode=1, expected_charging=False,
+                              payloads=[p, p1], reason=reason)
             # Notify: back to backup
             if prev_mode == 2 and commands_live:
                 ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"

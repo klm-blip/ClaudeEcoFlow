@@ -109,6 +109,18 @@ class MQTTHandler:
         self._client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=120)
         self._client.loop_start()
 
+    def reconnect(self):
+        """Force a clean MQTT reconnect — used to recover from publish-zombie state."""
+        log.warning("MQTT: forcing reconnect")
+        try:
+            self._client.disconnect()
+        except Exception as e:
+            log.warning("MQTT disconnect error: %s", e)
+        try:
+            self._client.reconnect()
+        except Exception as e:
+            log.error("MQTT reconnect error: %s", e)
+
     def publish_command(self, payload: bytes, commands_live: bool = False):
         """Send a protobuf-encoded command. payload must be ready-to-publish bytes."""
         if commands_live:
