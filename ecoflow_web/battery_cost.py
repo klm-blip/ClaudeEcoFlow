@@ -170,7 +170,7 @@ class BatteryCostPool:
                 and soc_pct is not None
                 and self._session_meter_wh > 500):  # ignore small sessions (<500 Wh)
             soc_delta = soc_pct - self._session_soc_start
-            if soc_delta > 3.0:  # need 3%+ SOC change (~1.5 kWh) for reliable measurement
+            if soc_delta >= 10.0:  # need 10%+ SOC change (~5 kWh) — integer SOC noise dominates smaller deltas
                 stored_wh = (soc_delta / 100.0) * self.capacity_wh
                 self._charge_total_in += self._session_meter_wh
                 self._charge_total_stored += stored_wh
@@ -202,7 +202,7 @@ class BatteryCostPool:
                 and soc_pct is not None
                 and self._discharge_ac_wh > 500):  # ignore small sessions (<500 Wh)
             soc_delta = self._discharge_soc_start - soc_pct  # positive = SOC dropped
-            if soc_delta > 3.0:  # need 3%+ SOC change (~1.5 kWh) for reliable measurement
+            if soc_delta >= 10.0:  # need 10%+ SOC change (~5 kWh) — integer SOC noise dominates smaller deltas
                 consumed_wh = (soc_delta / 100.0) * self.capacity_wh
                 self._discharge_total_out += consumed_wh
                 self._discharge_total_delivered += self._discharge_ac_wh
@@ -279,14 +279,14 @@ class BatteryCostPool:
     @property
     def measured_charge_eff(self) -> float:
         """Measured charge efficiency (informational only, not used in calcs yet)."""
-        if self.charge_efficiency_pct > 0 and 50.0 <= self.charge_efficiency_pct <= 105.0:
+        if self.charge_efficiency_pct > 0 and 50.0 <= self.charge_efficiency_pct <= 100.0:
             return self.charge_efficiency_pct
         return 0.0  # not enough data
 
     @property
     def measured_discharge_eff(self) -> float:
         """Measured discharge efficiency (informational only, not used in calcs yet)."""
-        if self.discharge_efficiency_pct > 0 and 50.0 <= self.discharge_efficiency_pct <= 105.0:
+        if self.discharge_efficiency_pct > 0 and 50.0 <= self.discharge_efficiency_pct <= 100.0:
             return self.discharge_efficiency_pct
         return 0.0  # not enough data
 

@@ -37,6 +37,8 @@ class BatteryMonitor:
         self.discharge_ac_wh = 0.0    # total AC Wh out of battery
         self.vampire_wh = 0.0         # estimated idle drain
         self.total_seconds = 0.0      # total monitoring time
+        self.soc_start_global = None  # SOC at very first tick (for SOC-corrected aggregate)
+        self.soc_last = None          # most recent SOC seen
 
         # ── Daily totals (reset at midnight) ──────────────────────
         self._today = None
@@ -60,7 +62,14 @@ class BatteryMonitor:
         if self._last_ts <= 0:
             self._last_ts = now
             self._init_day(soc_pct)
+            if self.soc_start_global is None and soc_pct is not None:
+                self.soc_start_global = soc_pct
+            self.soc_last = soc_pct
             return
+        if soc_pct is not None:
+            self.soc_last = soc_pct
+            if self.soc_start_global is None:
+                self.soc_start_global = soc_pct
         dt = now - self._last_ts
         if dt <= 0 or dt > 60:  # skip bogus gaps
             self._last_ts = now
@@ -242,10 +251,38 @@ class BatteryMonitor:
 
     @property
     def aggregate_roundtrip_pct(self) -> float:
-        """Long-term roundtrip efficiency: discharge / charge."""
+        """Long-term roundtrip efficiency: discharge / charge.
+        Only meaningful when net SOC drift is small."""
         if self.charge_ac_wh < 1000:  # need at least 1 kWh
             return 0.0
         return self.discharge_ac_wh / self.charge_ac_wh * 100
+
+    @property
+    def stored_delta_wh(self) -> float:
+        """Net Wh added to battery since monitoring started (signed)."""
+        if self.soc_start_global is None or self.soc_last is None:
+            return 0.0
+        return ((self.soc_last - self.soc_start_global) / 100.0) * BATTERY_CAPACITY_WH
+
+    @property
+    def soc_corrected_roundtrip_pct(self) -> float:
+        """SOC-corrected roundtrip eff. Adjusts for net SOC drift over the
+        monitoring window so the result is meaningful even when the battery
+        ends at a very different SOC than it started.
+
+        If SOC went up: some charged energy is still in the battery — credit it
+        as if it had been discharged.
+        If SOC went down: real charge needed was higher — add the deficit.
+        """
+        sd = self.stored_delta_wh
+        eff_discharge = self.discharge_ac_wh + max(0.0, sd)
+        eff_charge    = self.charge_ac_wh    + max(0.0, -sd)
+        if eff_charge < 5000:  # need at least 5 kWh of effective charge for stability
+            return 0.0
+        eff = eff_discharge / eff_charge * 100
+        if eff < 30 or eff > 100:
+            return 0.0  # outside plausible range — treat as not enough data
+        return eff
 
     @property
     def monitoring_hours(self) -> float:
@@ -257,6 +294,10 @@ class BatteryMonitor:
             "discharge_kwh": round(self.discharge_ac_wh / 1000, 2),
             "vampire_kwh": round(self.vampire_wh / 1000, 2),
             "aggregate_roundtrip_pct": round(self.aggregate_roundtrip_pct, 1),
+            "soc_corrected_roundtrip_pct": round(self.soc_corrected_roundtrip_pct, 1),
+            "soc_start_global": self.soc_start_global,
+            "soc_last": self.soc_last,
+            "stored_delta_kwh": round(self.stored_delta_wh / 1000, 2),
             "monitoring_hours": round(self.monitoring_hours, 1),
             "monitoring_days": round(self.monitoring_hours / 24, 1),
         }
@@ -269,6 +310,8 @@ class BatteryMonitor:
             "discharge_ac_wh": self.discharge_ac_wh,
             "vampire_wh": self.vampire_wh,
             "total_seconds": self.total_seconds,
+            "soc_start_global": self.soc_start_global,
+            "soc_last": self.soc_last,
         }
 
     def load_state(self, d: dict):
@@ -278,6 +321,8 @@ class BatteryMonitor:
         self.discharge_ac_wh = d.get("discharge_ac_wh", 0.0)
         self.vampire_wh = d.get("vampire_wh", 0.0)
         self.total_seconds = d.get("total_seconds", 0.0)
+        self.soc_start_global = d.get("soc_start_global")
+        self.soc_last = d.get("soc_last")
         log.info(
             "Battery monitor loaded: charge=%.1fkWh discharge=%.1fkWh "
             "vampire=%.1fkWh rt_eff=%.1f%% over %.1f days",
