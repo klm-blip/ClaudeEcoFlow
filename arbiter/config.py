@@ -60,16 +60,49 @@ TARGET_ENERGY_RATE = float(os.environ.get("TARGET_ENERGY_RATE", "9.5"))
 
 # ── 5-CP Capacity Protection ───────────────────────────────────────────────
 # Defends ComEd capacity charges (PLC) on PJM 5-CP days. Forces aggressive
-# discharge during the PJM peak window (14-19 ET) on high-likelihood days.
-ENABLE_5CP_PROTECTION = os.environ.get("ENABLE_5CP_PROTECTION", "false").lower() in ("true", "1", "yes")
-# Hours (local ET) considered the PJM coincident peak window
-CP_PEAK_HOUR_START = int(os.environ.get("CP_PEAK_HOUR_START", "14"))
-CP_PEAK_HOUR_END   = int(os.environ.get("CP_PEAK_HOUR_END",   "19"))   # inclusive
+# discharge during the PJM peak window on high-likelihood days.
+#
+# Mode: "auto" (default) auto-enables on/after CP_AUTO_ENABLE_DATE each year
+#       and disables before. Explicit "true"/"false" override the schedule.
+CP_PROTECTION_MODE = os.environ.get("ENABLE_5CP_PROTECTION", "auto").lower()
+# MM-DD on/after which auto-mode flips on each year. Off again Oct 1.
+CP_AUTO_ENABLE_DATE = os.environ.get("CP_AUTO_ENABLE_DATE", "06-01")
+# Hours (local ET) considered the PJM coincident peak window.
+# Default 12-20 is wider than the typical 14-18 to cover edge cases —
+# capacity charges dwarf any extra cycle losses on defense days.
+CP_PEAK_HOUR_START = int(os.environ.get("CP_PEAK_HOUR_START", "12"))
+CP_PEAK_HOUR_END   = int(os.environ.get("CP_PEAK_HOUR_END",   "20"))   # inclusive
 # Score thresholds (matches capacity.py tier classification)
 CP_SCORE_HIGH    = float(os.environ.get("CP_SCORE_HIGH",   "70"))
 CP_SCORE_MEDIUM  = float(os.environ.get("CP_SCORE_MEDIUM", "50"))
-# Months when 5-CP scoring is active (PJM peaks always Jun-Sep)
-CP_ACTIVE_MONTHS = (6, 7, 8, 9)
+# Months when 5-CP scoring is active (PJM peaks always Jun-Sep).
+# Override via CP_ACTIVE_MONTHS="4,5,6,7,8,9" for testing.
+_cp_months_env = os.environ.get("CP_ACTIVE_MONTHS")
+if _cp_months_env:
+    CP_ACTIVE_MONTHS = tuple(int(m) for m in _cp_months_env.split(","))
+else:
+    CP_ACTIVE_MONTHS = (6, 7, 8, 9)
+
+
+def is_5cp_protection_enabled(today=None) -> bool:
+    """Resolve 5-CP protection state — explicit override or date-based auto.
+
+    auto: ON if today is between CP_AUTO_ENABLE_DATE and Sep 30 inclusive.
+    """
+    import datetime
+    if CP_PROTECTION_MODE in ("true", "1", "yes", "on"):
+        return True
+    if CP_PROTECTION_MODE in ("false", "0", "no", "off"):
+        return False
+    # auto mode
+    today = today or datetime.date.today()
+    try:
+        m, d = (int(x) for x in CP_AUTO_ENABLE_DATE.split("-"))
+    except Exception:
+        m, d = 6, 1
+    start = datetime.date(today.year, m, d)
+    end = datetime.date(today.year, 9, 30)
+    return start <= today <= end
 
 # Logging
 LOG_FILE = os.environ.get("ARBITER_LOG_FILE", "logs/arbiter.csv")

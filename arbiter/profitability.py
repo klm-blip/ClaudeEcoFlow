@@ -201,7 +201,7 @@ def evaluate(state: dict, override_hour: int = None, override_weekday: int = Non
     cp_score = state.get("capacity_score")  # injected by main.py
     cp_tier = state.get("capacity_tier")
     cp_in_window = state.get("capacity_in_peak_window", False)
-    if (config.ENABLE_5CP_PROTECTION
+    if (config.is_5cp_protection_enabled()
             and cp_in_window
             and cp_tier in ("HIGH", "MEDIUM")
             and soc > min_discharge_soc):

@@ -165,8 +165,9 @@ def run():
              config.SPIKE_ENERGY_PRICE, config.TARGET_ENERGY_RATE)
     log.info("T&D rate: %.1f¢", config.TD_RATE)
     log.info("SOC willingness bands: %s", config.WILLINGNESS_SOC_BANDS)
-    log.info("5-CP protection: %s (peak %d-%d ET, HIGH>=%.0f, MEDIUM>=%.0f)",
-             "ON" if config.ENABLE_5CP_PROTECTION else "OFF",
+    log.info("5-CP protection: %s [mode=%s, auto-enable=%s] (peak %d-%d ET, HIGH>=%.0f, MEDIUM>=%.0f)",
+             "ON" if config.is_5cp_protection_enabled() else "OFF",
+             config.CP_PROTECTION_MODE, config.CP_AUTO_ENABLE_DATE,
              config.CP_PEAK_HOUR_START, config.CP_PEAK_HOUR_END,
              config.CP_SCORE_HIGH, config.CP_SCORE_MEDIUM)
     log.info("Timing: evening %.1f¢, morning %.1f¢, overnight %+.1f¢",
@@ -183,7 +184,7 @@ def run():
                 continue
 
             # Inject 5-CP capacity score (cached daily inside capacity_live)
-            if config.ENABLE_5CP_PROTECTION:
+            if config.is_5cp_protection_enabled():
                 try:
                     cp = capacity_live.get_today_score()
                     if cp is not None:
