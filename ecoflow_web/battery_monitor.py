@@ -285,6 +285,23 @@ class BatteryMonitor:
         return eff
 
     @property
+    def delivered_efficiency_pct(self) -> float:
+        """SOC-corrected RT including vampire as overhead.
+        Answers: 'over the long run, what fraction of grid energy
+        I put into the battery actually ends up powering the home?'
+        Vampire is a sunk cost of having the battery at all, so this
+        is informational — NOT the cycle efficiency."""
+        sd = self.stored_delta_wh
+        eff_discharge = self.discharge_ac_wh + max(0.0, sd)
+        eff_charge = self.charge_ac_wh + max(0.0, -sd) + self.vampire_wh
+        if eff_charge < 5000:
+            return 0.0
+        eff = eff_discharge / eff_charge * 100
+        if eff < 0 or eff > 100:
+            return 0.0
+        return eff
+
+    @property
     def monitoring_hours(self) -> float:
         return self.total_seconds / 3600
 
@@ -295,6 +312,7 @@ class BatteryMonitor:
             "vampire_kwh": round(self.vampire_wh / 1000, 2),
             "aggregate_roundtrip_pct": round(self.aggregate_roundtrip_pct, 1),
             "soc_corrected_roundtrip_pct": round(self.soc_corrected_roundtrip_pct, 1),
+            "delivered_efficiency_pct": round(self.delivered_efficiency_pct, 1),
             "soc_start_global": self.soc_start_global,
             "soc_last": self.soc_last,
             "stored_delta_kwh": round(self.stored_delta_wh / 1000, 2),
