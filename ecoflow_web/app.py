@@ -271,13 +271,21 @@ def api_arbiter_log():
     except Exception:
         pass
 
-    # Summarize: pick dominant action per hour
+    # Summarize: prefer "active" actions (discharge/charge) over hold,
+    # so a partial-hour discharge isn't hidden by the majority of hold ticks.
+    # Threshold: any hour with >=5% active ticks gets labeled by that action.
     result = {}
     for hour, data in hourly.items():
-        dominant = max(data["actions"], key=data["actions"].get)
+        actions = data["actions"]
+        total = sum(actions.values()) or 1
+        chosen = max(actions, key=actions.get)  # default = dominant
+        for active in ("discharge", "charge"):
+            if actions.get(active, 0) / total >= 0.05:
+                chosen = active
+                break
         result[str(hour)] = {
-            "action": dominant,
-            "counts": data["actions"],
+            "action": chosen,
+            "counts": actions,
             "reason": data["last_reason"],
         }
     return json.dumps({"date": date_str, "hours": result})

@@ -21,7 +21,7 @@ MAX_CHARGE_ENERGY_PRICE = float(os.environ.get("MAX_CHARGE_ENERGY_PRICE", "4.0")
 
 # Base safety margin above effective battery cost before discharging (cents)
 # This is the base_margin in the willingness formula
-SAFETY_MARGIN_CENTS = float(os.environ.get("SAFETY_MARGIN_CENTS", "2.0"))
+SAFETY_MARGIN_CENTS = float(os.environ.get("SAFETY_MARGIN_CENTS", "1.5"))
 
 # Absolute floor — never discharge below this energy price regardless (cents)
 MIN_DISCHARGE_ENERGY_PRICE = float(os.environ.get("MIN_DISCHARGE_ENERGY_PRICE", "3.0"))
