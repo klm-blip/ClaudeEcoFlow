@@ -165,7 +165,7 @@ def api_energy_dates():
 @app.route("/api/battery_monitor")
 def api_battery_monitor():
     """Return battery monitor aggregate stats."""
-    return jsonify(battery_monitor.to_dict())
+    return json.dumps(battery_monitor.to_dict())
 
 # ─── Simulation API ──────────────────────────────────────────────────────
 
