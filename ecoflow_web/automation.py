@@ -202,11 +202,23 @@ class AutoController:
                 return 2, 0, f"DISCHARGE: {ep:.1f}c [{src}] >= {t.discharge_above:.1f}c"
             return 1, 0, f"HOLD: price high but SOC {soc:.0f}% too low"
 
+        # ── Cancel-on-retreat: if latest 5-min has dropped back below the
+        # trend-alert threshold, the spike is over — bail out of discharge
+        # immediately, don't wait for the soft glide. This prevents
+        # discharging into hours where a brief spike triggered the alert
+        # but prices have already collapsed.
+        if (self.last_mode == 2
+                and ps.price_5min is not None
+                and ps.price_5min < t.trend_alert_threshold
+                and ep < t.discharge_above):
+            self._glide_start_ts = 0.0
+            # Fall through to normal (non-discharge) logic below
+            pass
         # ── Soft glide: delay discharge→backup transition ─────────────
         # If we were discharging and price just dropped below threshold,
         # keep discharging for glide_minutes to avoid premature switchback
         # after price spikes. Resets at hour boundary (hourly avg resets).
-        if self.last_mode == 2 and t.glide_minutes > 0:
+        elif self.last_mode == 2 and t.glide_minutes > 0:
             now_dt = datetime.datetime.now()
             now_minute = now_dt.minute
 
