@@ -58,5 +58,18 @@ TIMING_OVERNIGHT_CHEAP = float(os.environ.get("TIMING_OVERNIGHT_CHEAP", "3.0")) 
 # User's flat-rate alternative (energy only, cents). Goal: stay below this.
 TARGET_ENERGY_RATE = float(os.environ.get("TARGET_ENERGY_RATE", "9.5"))
 
+# ── 5-CP Capacity Protection ───────────────────────────────────────────────
+# Defends ComEd capacity charges (PLC) on PJM 5-CP days. Forces aggressive
+# discharge during the PJM peak window (14-19 ET) on high-likelihood days.
+ENABLE_5CP_PROTECTION = os.environ.get("ENABLE_5CP_PROTECTION", "false").lower() in ("true", "1", "yes")
+# Hours (local ET) considered the PJM coincident peak window
+CP_PEAK_HOUR_START = int(os.environ.get("CP_PEAK_HOUR_START", "14"))
+CP_PEAK_HOUR_END   = int(os.environ.get("CP_PEAK_HOUR_END",   "19"))   # inclusive
+# Score thresholds (matches capacity.py tier classification)
+CP_SCORE_HIGH    = float(os.environ.get("CP_SCORE_HIGH",   "70"))
+CP_SCORE_MEDIUM  = float(os.environ.get("CP_SCORE_MEDIUM", "50"))
+# Months when 5-CP scoring is active (PJM peaks always Jun-Sep)
+CP_ACTIVE_MONTHS = (6, 7, 8, 9)
+
 # Logging
 LOG_FILE = os.environ.get("ARBITER_LOG_FILE", "logs/arbiter.csv")

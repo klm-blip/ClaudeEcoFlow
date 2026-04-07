@@ -194,6 +194,23 @@ def evaluate(state: dict, override_hour: int = None, override_weekday: int = Non
             f"| energy {energy_price:.1f}¢ > {band_name} cap {band_price_cap:.1f}¢ -> hold"
         )
 
+    # ── 5-CP Capacity Protection (highest priority after floor) ────────
+    # If today is a likely PJM 5-CP day and we're in the peak window,
+    # discharge regardless of profitability — capacity charges dwarf any
+    # cycle loss. ~$20-30/kW-year saved per peak vs ~$1-3 cycle loss.
+    cp_score = state.get("capacity_score")  # injected by main.py
+    cp_tier = state.get("capacity_tier")
+    cp_in_window = state.get("capacity_in_peak_window", False)
+    if (config.ENABLE_5CP_PROTECTION
+            and cp_in_window
+            and cp_tier in ("HIGH", "MEDIUM")
+            and soc > min_discharge_soc):
+        return "discharge", (
+            f"5-CP DEFENSE [{cp_tier} score={cp_score}]: "
+            f"PJM peak window, force discharge to defend capacity charge "
+            f"(SOC {soc:.0f}%, energy {energy_price:.1f}¢)"
+        )
+
     # Spike override: always discharge above spike threshold (regardless of willingness)
     spike_total = config.SPIKE_ENERGY_PRICE + config.TD_RATE
     if energy_price >= config.SPIKE_ENERGY_PRICE:

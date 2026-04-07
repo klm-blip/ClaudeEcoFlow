@@ -31,6 +31,7 @@ import requests
 
 from . import config
 from .profitability import evaluate
+from . import capacity_live
 
 logging.basicConfig(
     level=logging.INFO,
@@ -164,6 +165,10 @@ def run():
              config.SPIKE_ENERGY_PRICE, config.TARGET_ENERGY_RATE)
     log.info("T&D rate: %.1f¢", config.TD_RATE)
     log.info("SOC willingness bands: %s", config.WILLINGNESS_SOC_BANDS)
+    log.info("5-CP protection: %s (peak %d-%d ET, HIGH>=%.0f, MEDIUM>=%.0f)",
+             "ON" if config.ENABLE_5CP_PROTECTION else "OFF",
+             config.CP_PEAK_HOUR_START, config.CP_PEAK_HOUR_END,
+             config.CP_SCORE_HIGH, config.CP_SCORE_MEDIUM)
     log.info("Timing: evening %.1f¢, morning %.1f¢, overnight %+.1f¢",
              config.TIMING_EVENING_PEAK, config.TIMING_MORNING_PEAK,
              config.TIMING_OVERNIGHT_CHEAP)
@@ -176,6 +181,17 @@ def run():
                 log.warning("No state — dashboard unreachable, will retry in %ds", config.POLL_INTERVAL)
                 time.sleep(config.POLL_INTERVAL)
                 continue
+
+            # Inject 5-CP capacity score (cached daily inside capacity_live)
+            if config.ENABLE_5CP_PROTECTION:
+                try:
+                    cp = capacity_live.get_today_score()
+                    if cp is not None:
+                        state["capacity_score"] = cp.score
+                        state["capacity_tier"] = cp.tier
+                        state["capacity_in_peak_window"] = capacity_live.in_peak_window()
+                except Exception as e:
+                    log.warning("capacity scoring failed: %s", e)
 
             action, reason = evaluate(state)
 
