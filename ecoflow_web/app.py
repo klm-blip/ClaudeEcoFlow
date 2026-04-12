@@ -874,6 +874,7 @@ def _save_runtime_state():
         "battery_pool": battery_pool.save_state(),
         "energy_hour": energy_tracker.save_state(),
         "battery_monitor": battery_monitor.save_state(),
+        "history": history.save_state(),
     }
     try:
         with _state_lock:
@@ -893,6 +894,7 @@ def _load_runtime_state():
         battery_pool.load_state(state.get("battery_pool"))
         energy_tracker.load_state(state.get("energy_hour"))
         battery_monitor.load_state(state.get("battery_monitor"))
+        history.load_state(state.get("history"))
     except Exception as e:
         log.warning("Failed to load runtime state: %s", e)
 
