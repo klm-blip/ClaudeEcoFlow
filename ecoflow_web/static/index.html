@@ -653,6 +653,55 @@ button:active{transform:scale(0.97)}
 
 </div><!-- /tab-ev -->
 
+<!-- ═══ ENERGY USE TAB ═════════════════════════════════════════════════════ -->
+<div id="tab-energy" class="tab-content">
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Power History (15 min)</div>
+    <canvas id="history-canvas" class="chart-canvas"></canvas>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Current Hour</div>
+    <div id="energy-current" style="font-size:0.85rem;color:var(--text)">Waiting for data...</div>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="section-title" style="margin-bottom:0">Today's Energy</div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <button id="energy-prev" onclick="changeEnergyDate(-1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&lt;</button>
+        <input type="date" id="energy-date" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.75rem;font-family:var(--font-mono)" onchange="fetchEnergyDay(this.value)">
+        <button id="energy-next" onclick="changeEnergyDate(1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&gt;</button>
+      </div>
+    </div>
+    <div id="energy-table" style="overflow-x:auto"></div>
+    <div id="energy-day-summary" style="margin-top:8px;font-size:0.82rem;color:var(--dim)"></div>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Arbiter Simulation
+      <span id="sim-status" style="font-size:0.7rem;color:var(--dim);margin-left:8px"></span>
+    </div>
+    <div id="simulation-results" style="font-size:0.82rem;color:var(--dim)">Loading simulation...</div>
+  </div>
+</div>
+<div class="chart-section">
+  <div class="chart-card">
+    <div class="section-title">Period Summaries</div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="energy-period-btn" onclick="fetchEnergySummary('day')" style="background:var(--blue);color:#fff;padding:4px 12px;font-size:0.78rem;border-radius:4px">Today</button>
+      <button class="energy-period-btn" onclick="fetchEnergySummary('week')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Week</button>
+      <button class="energy-period-btn" onclick="fetchEnergySummary('month')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Month</button>
+    </div>
+    <div id="energy-summary" style="font-size:0.82rem"></div>
+  </div>
+</div>
+</div><!-- /tab-energy -->
+
 <!-- ═══ POWER TAB ═════════════════════════════════════════════════════════ -->
 <div id="tab-power" class="tab-content">
 <div class="chart-section">
@@ -707,55 +756,6 @@ button:active{transform:scale(0.97)}
   </div>
 </div>
 </div><!-- /tab-power -->
-
-<!-- ═══ ENERGY USE TAB ═════════════════════════════════════════════════════ -->
-<div id="tab-energy" class="tab-content">
-<div class="chart-section">
-  <div class="chart-card">
-    <div class="section-title">Power History (15 min)</div>
-    <canvas id="history-canvas" class="chart-canvas"></canvas>
-  </div>
-</div>
-<div class="chart-section">
-  <div class="chart-card">
-    <div class="section-title">Current Hour</div>
-    <div id="energy-current" style="font-size:0.85rem;color:var(--text)">Waiting for data...</div>
-  </div>
-</div>
-<div class="chart-section">
-  <div class="chart-card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div class="section-title" style="margin-bottom:0">Today's Energy</div>
-      <div style="display:flex;gap:4px;align-items:center">
-        <button id="energy-prev" onclick="changeEnergyDate(-1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&lt;</button>
-        <input type="date" id="energy-date" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.75rem;font-family:var(--font-mono)" onchange="fetchEnergyDay(this.value)">
-        <button id="energy-next" onclick="changeEnergyDate(1)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:2px 8px;font-size:0.8rem;border-radius:4px">&gt;</button>
-      </div>
-    </div>
-    <div id="energy-table" style="overflow-x:auto"></div>
-    <div id="energy-day-summary" style="margin-top:8px;font-size:0.82rem;color:var(--dim)"></div>
-  </div>
-</div>
-<div class="chart-section">
-  <div class="chart-card">
-    <div class="section-title">Arbiter Simulation
-      <span id="sim-status" style="font-size:0.7rem;color:var(--dim);margin-left:8px"></span>
-    </div>
-    <div id="simulation-results" style="font-size:0.82rem;color:var(--dim)">Loading simulation...</div>
-  </div>
-</div>
-<div class="chart-section">
-  <div class="chart-card">
-    <div class="section-title">Period Summaries</div>
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <button class="energy-period-btn" onclick="fetchEnergySummary('day')" style="background:var(--blue);color:#fff;padding:4px 12px;font-size:0.78rem;border-radius:4px">Today</button>
-      <button class="energy-period-btn" onclick="fetchEnergySummary('week')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Week</button>
-      <button class="energy-period-btn" onclick="fetchEnergySummary('month')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:4px 12px;font-size:0.78rem;border-radius:4px">This Month</button>
-    </div>
-    <div id="energy-summary" style="font-size:0.82rem"></div>
-  </div>
-</div>
-</div><!-- /tab-energy -->
 
 <!-- ═══ COMMAND LOG (bottom of page, always visible) ══════════════════════ -->
 <div class="desktop-only">
@@ -1098,7 +1098,7 @@ function renderHourlyPriceChart(hours) {
   const priceByHour = {};
   hours.forEach(r => {
     const price = parseFloat(r.avg_price_cents || 0);
-    if (price > 0) priceByHour[parseInt(r.hour)] = price;
+    priceByHour[parseInt(r.hour)] = price;
   });
 
   const prices = Object.values(priceByHour);
@@ -1389,7 +1389,7 @@ function renderPowerDayTable(hours, dateStr) {
     'Charge <b style="color:var(--charge-green)">' + totalChg.toFixed(2) + '</b> kWh | ' +
     'Discharge <b style="color:var(--discharge-amber)">' + totalDis.toFixed(2) + '</b> kWh' +
     '<br>Peak load hour: <b>' + peakLoad.toFixed(2) + ' kWh</b> at ' + peakHStr +
-    ' | Self-powered: <b>' + (totalLoad > 0 ? ((totalDis / totalLoad) * 100).toFixed(0) : '0') + '%</b> from battery';
+    ' | Battery discharge: <b>' + (totalLoad > 0 ? ((totalDis / totalLoad) * 100).toFixed(0) : '0') + '%</b> of load';
 }
 
 // ═══ Render ══════════════════════════════════════════════════════════════

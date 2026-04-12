@@ -14,4 +14,3 @@
 - Deploy: `ssh pi@kpi.local && cd /home/pi/ecoflow && git pull && docker compose up -d --build`
 - Docker services: `ecoflow-dashboard`, `arbiter`
 - Dashboard URL: `http://kpi.local:5000`
-- GitHub token (Pi Deploy): stored via git credential store (`~/.git-credentials`), no expiration
