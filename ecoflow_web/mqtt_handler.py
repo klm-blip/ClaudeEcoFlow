@@ -29,6 +29,9 @@ class MQTTHandler:
         self.last_msg_ts = 0.0
         self.last_cmd_ts = 0.0  # when we last published a command
         self.pending_ack = False  # waiting for set_reply?
+        self.publish_ok_count  = 0
+        self.publish_fail_count = 0
+        self.reconnect_count = 0
         self._client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION1,
             client_id=CLIENT_ID,
@@ -111,7 +114,8 @@ class MQTTHandler:
 
     def reconnect(self):
         """Force a clean MQTT reconnect — used to recover from publish-zombie state."""
-        log.warning("MQTT: forcing reconnect")
+        self.reconnect_count += 1
+        log.warning("MQTT: forcing reconnect (#%d)", self.reconnect_count)
         try:
             self._client.disconnect()
         except Exception as e:
@@ -121,12 +125,44 @@ class MQTTHandler:
         except Exception as e:
             log.error("MQTT reconnect error: %s", e)
 
-    def publish_command(self, payload: bytes, commands_live: bool = False):
-        """Send a protobuf-encoded command. payload must be ready-to-publish bytes."""
-        if commands_live:
-            self.pending_ack = True
-            self.last_cmd_ts = time.time()
-            rc = self._client.publish(COMMAND_TOPIC, payload, qos=1)
-            log.info("CMD LIVE rc=%s  %d bytes: %s", rc.rc, len(payload), payload.hex())
-        else:
+    def publish_command(self, payload: bytes, commands_live: bool = False) -> bool:
+        """Send a protobuf-encoded command. Returns True if broker ACKed (QoS 1)."""
+        if not commands_live:
             log.info("CMD DRY  %d bytes: %s", len(payload), payload.hex())
+            return True
+
+        self.pending_ack = True
+        self.last_cmd_ts = time.time()
+        info = self._client.publish(COMMAND_TOPIC, payload, qos=1)
+
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            self.publish_fail_count += 1
+            log.error("CMD PUBLISH FAILED rc=%s — forcing reconnect", info.rc)
+            self.pending_ack = False
+            self.reconnect()
+            return False
+
+        # Wait for broker PUBACK (QoS 1 confirmation that broker received it)
+        try:
+            info.wait_for_publish(timeout=10)
+            self.publish_ok_count += 1
+            log.info("CMD LIVE (ACKed)  %d bytes: %s", len(payload), payload.hex())
+            return True
+        except ValueError:
+            self.publish_fail_count += 1
+            log.error("CMD PUBLISH invalid state — forcing reconnect")
+            self.pending_ack = False
+            self.reconnect()
+            return False
+        except RuntimeError:
+            self.publish_fail_count += 1
+            log.error("CMD PUBLISH not queued — forcing reconnect")
+            self.pending_ack = False
+            self.reconnect()
+            return False
+        except Exception:
+            self.publish_fail_count += 1
+            log.error("CMD PUBLISH timeout (no PUBACK in 10s) — forcing reconnect")
+            self.pending_ack = False
+            self.reconnect()
+            return False

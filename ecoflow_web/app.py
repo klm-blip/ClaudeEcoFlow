@@ -386,6 +386,9 @@ def _build_state_msg():
         "commands_live":  commands_live,
         "command_log":    command_log[-30:],
         "mqtt_connected": mqtt_handler.is_alive if mqtt_handler else False,
+        "mqtt_publish_ok": mqtt_handler.publish_ok_count if mqtt_handler else 0,
+        "mqtt_publish_fail": mqtt_handler.publish_fail_count if mqtt_handler else 0,
+        "mqtt_reconnects": mqtt_handler.reconnect_count if mqtt_handler else 0,
         "telegram":       notifier.to_dict(),
         "battery_cost":   battery_pool.to_dict(),
         "energy_hour":    energy_tracker.to_dict(),
@@ -705,9 +708,10 @@ def _run_automation():
     if mode == 2:
         # Self-Powered (discharge)
         p = build_and_wrap(build_mode_command(self_powered=True))
-        mqtt_handler.publish_command(p, commands_live)
-        _log_command(f"AUTO: {reason}")
-        _arm_verification(expected_mode=2, expected_charging=False, payloads=[p], reason=reason)
+        ok = mqtt_handler.publish_command(p, commands_live)
+        _log_command(f"AUTO: {reason}" + ("" if ok else " [PUBLISH FAILED]"))
+        if ok:
+            _arm_verification(expected_mode=2, expected_charging=False, payloads=[p], reason=reason)
         # Notify: mode → Self-Powered
         if prev_mode != 2 and commands_live:
             ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
@@ -717,16 +721,18 @@ def _run_automation():
     elif mode == 1:
         # Backup mode
         p = build_and_wrap(build_mode_command(self_powered=False))
-        mqtt_handler.publish_command(p, commands_live)
+        ok = mqtt_handler.publish_command(p, commands_live)
         if rate and rate > 0:
             # Start charging at specified rate
             p1 = build_and_wrap(build_charge_command(True))
-            mqtt_handler.publish_command(p1, commands_live)
+            ok2 = mqtt_handler.publish_command(p1, commands_live)
             p2 = build_and_wrap(build_charge_power_command(rate, int(thresholds.max_soc)))
-            mqtt_handler.publish_command(p2, commands_live)
-            _log_command(f"AUTO: {reason}")
-            _arm_verification(expected_mode=1, expected_charging=True,
-                              payloads=[p, p1, p2], reason=reason)
+            ok3 = mqtt_handler.publish_command(p2, commands_live)
+            all_ok = ok and ok2 and ok3
+            _log_command(f"AUTO: {reason}" + ("" if all_ok else " [PUBLISH FAILED]"))
+            if all_ok:
+                _arm_verification(expected_mode=1, expected_charging=True,
+                                  payloads=[p, p1, p2], reason=reason)
             # Notify: charge started
             if commands_live:
                 ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
@@ -735,10 +741,12 @@ def _run_automation():
         elif rate == 0:
             # Stop charging
             p1 = build_and_wrap(build_charge_command(False))
-            mqtt_handler.publish_command(p1, commands_live)
-            _log_command(f"AUTO: {reason}")
-            _arm_verification(expected_mode=1, expected_charging=False,
-                              payloads=[p, p1], reason=reason)
+            ok2 = mqtt_handler.publish_command(p1, commands_live)
+            all_ok = ok and ok2
+            _log_command(f"AUTO: {reason}" + ("" if all_ok else " [PUBLISH FAILED]"))
+            if all_ok:
+                _arm_verification(expected_mode=1, expected_charging=False,
+                                  payloads=[p, p1], reason=reason)
             # Notify: back to backup
             if prev_mode == 2 and commands_live:
                 ep_str = f"{price_state.effective_price:.1f}¢" if price_state.effective_price else "?"
