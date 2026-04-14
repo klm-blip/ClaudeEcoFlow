@@ -42,7 +42,7 @@ class EnergyTracker:
     # ── Core update (called every telemetry tick) ─────────────────────────
 
     def update(self, grid_w: float, load_w: float, battery_w: float,
-               effective_price: float):
+               effective_price: float, energy_price: float = None):
         """Accumulate energy for the current hour. Flushes on hour rollover."""
         now = time.time()
         now_dt = datetime.datetime.now()
@@ -94,7 +94,10 @@ class EnergyTracker:
         # Cost = grid energy only (battery discharge is free)
         if effective_price is not None and grid > 0:
             self.cost_cents += (grid * dt_h / 1000.0) * effective_price
-            self._price_sum += effective_price
+            # avg_price tracks energy-only price (matches ComEd) for display;
+            # cost_cents uses effective_price which includes T&D.
+            display_price = energy_price if energy_price is not None else effective_price
+            self._price_sum += display_price
             self._price_count += 1
 
     # ── Flush completed hour to CSV ───────────────────────────────────────

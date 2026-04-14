@@ -220,9 +220,9 @@ button:active{transform:scale(0.97)}
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
     <div class="section-title" style="margin-bottom:0" id="price-chart-title">Current Hour Prices (5-min)</div>
     <div style="display:flex;align-items:center;gap:4px">
-      <button id="price-nav-prev" onclick="changePriceDate(-1)" style="display:none;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:1px 6px;font-size:0.7rem;border-radius:4px">&lt;</button>
-      <span id="price-nav-date" style="display:none;font-size:0.65rem;color:var(--dim);min-width:60px;text-align:center"></span>
-      <button id="price-nav-next" onclick="changePriceDate(1)" style="display:none;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:1px 6px;font-size:0.7rem;border-radius:4px">&gt;</button>
+      <button id="price-nav-prev" onclick="priceNavPrev()" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:1px 6px;font-size:0.7rem;border-radius:4px">&lt;</button>
+      <span id="price-nav-date" style="font-size:0.65rem;color:var(--dim);min-width:60px;text-align:center">Live</span>
+      <button id="price-nav-next" onclick="priceNavNext()" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:1px 6px;font-size:0.7rem;border-radius:4px">&gt;</button>
       <button id="price-toggle-btn" onclick="togglePriceChartMode()" style="background:var(--panel2);border:1px solid var(--border);color:var(--dim);padding:2px 8px;font-size:0.65rem;border-radius:4px">Hourly</button>
     </div>
   </div>
@@ -767,6 +767,14 @@ button:active{transform:scale(0.97)}
 
 
 <script>
+// ═══ Utility ═════════════════════════════════════════════════════════════
+function localDateStr(d) {
+  d = d || new Date();
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+
 // ═══ WebSocket ═══════════════════════════════════════════════════════════
 let ws = null, state = null, reconnectTimer = null;
 
@@ -1003,60 +1011,233 @@ function renderPriceBarChart(pr) {
   }
 }
 
-// ═══ Hourly Price Chart ══════════════════════════════════════════════════
+// ═══ Price Chart Mode Switching + 5-min Hour Navigation ═════════════════
 let _priceChartMode = '5min';  // '5min' or 'hourly'
-let _priceChartDate = new Date().toISOString().slice(0,10);
+let _priceChartDate = localDateStr();
 let _hourlyPriceCache = {};  // date -> [{hour, avg_price_cents}]
+let _5minViewHour = null;    // null = live (current hour), number = specific hour (0-23)
+let _5minCache = null;       // full 24h 5-min data from API: [[ts, price], ...]
+let _5minCacheTs = 0;        // when cache was last fetched
 
 function togglePriceChartMode() {
   const btn = document.getElementById('price-toggle-btn');
-  const title = document.getElementById('price-chart-title');
-  const navPrev = document.getElementById('price-nav-prev');
-  const navNext = document.getElementById('price-nav-next');
-  const navDate = document.getElementById('price-nav-date');
   if (_priceChartMode === '5min') {
     _priceChartMode = 'hourly';
     btn.textContent = '5-min';
-    _priceChartDate = new Date().toISOString().slice(0,10);
-    navPrev.style.display = '';
-    navNext.style.display = '';
-    navDate.style.display = '';
-    updatePriceDateLabel();
+    _priceChartDate = localDateStr();
+    _updatePriceNav();
     fetchHourlyPrices(_priceChartDate);
   } else {
     _priceChartMode = '5min';
     btn.textContent = 'Hourly';
-    title.textContent = 'Current Hour Prices (5-min)';
-    navPrev.style.display = 'none';
-    navNext.style.display = 'none';
-    navDate.style.display = 'none';
+    _5minViewHour = null;
+    _updatePriceNav();
     if (state && state.price) renderPriceBarChart(state.price);
   }
 }
 
-function changePriceDate(delta) {
-  const d = new Date(_priceChartDate);
+// Unified nav button handlers — behavior depends on current mode
+function priceNavPrev() {
+  if (_priceChartMode === 'hourly') {
+    _changePriceDate(-1);
+  } else {
+    _change5minHour(-1);
+  }
+}
+function priceNavNext() {
+  if (_priceChartMode === 'hourly') {
+    _changePriceDate(1);
+  } else {
+    _change5minHour(1);
+  }
+}
+
+function _changePriceDate(delta) {
+  const d = new Date(_priceChartDate + 'T12:00:00');
   d.setDate(d.getDate() + delta);
-  const today = new Date().toISOString().slice(0,10);
-  const newDate = d.toISOString().slice(0,10);
+  const today = localDateStr();
+  const newDate = localDateStr(d);
   if (newDate > today) return;
   _priceChartDate = newDate;
-  updatePriceDateLabel();
+  _updatePriceNav();
   fetchHourlyPrices(_priceChartDate);
 }
 
-function updatePriceDateLabel() {
+function _change5minHour(delta) {
+  const now = new Date();
+  const currentHour = now.getHours();
+  if (_5minViewHour === null) {
+    // Currently on live — going back enters history
+    if (delta < 0) {
+      _5minViewHour = currentHour + delta;
+    } else {
+      return; // can't go forward past live
+    }
+  } else {
+    _5minViewHour += delta;
+    // If we land on the current hour or later, snap back to live
+    if (_5minViewHour >= currentHour) {
+      _5minViewHour = null;
+      _updatePriceNav();
+      if (state && state.price) renderPriceBarChart(state.price);
+      return;
+    }
+  }
+  // Clamp: don't go further back than available data (roughly 24h)
+  if (_5minViewHour < currentHour - 23) _5minViewHour = currentHour - 23;
+
+  _updatePriceNav();
+  _render5minForHour(_5minViewHour);
+}
+
+function _updatePriceNav() {
   const title = document.getElementById('price-chart-title');
   const navDate = document.getElementById('price-nav-date');
-  const today = new Date().toISOString().slice(0,10);
-  if (_priceChartDate === today) {
-    title.textContent = 'Hourly Prices (Today)';
-    navDate.textContent = 'Today';
+
+  if (_priceChartMode === 'hourly') {
+    const today = localDateStr();
+    if (_priceChartDate === today) {
+      title.textContent = 'Hourly Prices (Today)';
+      navDate.textContent = 'Today';
+    } else {
+      const d = new Date(_priceChartDate + 'T12:00:00');
+      const label = (d.getMonth()+1) + '/' + d.getDate();
+      title.textContent = 'Hourly Prices (' + label + ')';
+      navDate.textContent = label;
+    }
   } else {
-    const d = new Date(_priceChartDate + 'T12:00:00');
-    const label = (d.getMonth()+1) + '/' + d.getDate();
-    title.textContent = 'Hourly Prices (' + label + ')';
-    navDate.textContent = label;
+    if (_5minViewHour === null) {
+      title.textContent = 'Current Hour Prices (5-min)';
+      navDate.textContent = 'Live';
+    } else {
+      const h = ((_5minViewHour % 24) + 24) % 24; // normalize negative hours
+      const hLabel = (h % 12 || 12) + (h < 12 ? ' AM' : ' PM');
+      title.textContent = '5-min Prices (' + hLabel + ')';
+      navDate.textContent = hLabel;
+    }
+  }
+}
+
+async function _fetch5minFull() {
+  // Refresh cache if stale (>60s old)
+  if (_5minCache && (Date.now() - _5minCacheTs) < 60000) return _5minCache;
+  try {
+    const resp = await fetch('/api/prices/5min');
+    const data = await resp.json();
+    _5minCache = data.entries || [];
+    _5minCacheTs = Date.now();
+    return _5minCache;
+  } catch(e) {
+    console.error('fetch5minFull error:', e);
+    return _5minCache || [];
+  }
+}
+
+async function _render5minForHour(targetHour) {
+  const entries = await _fetch5minFull();
+  if (!entries.length) return;
+
+  // Determine the target hour's time window
+  const now = new Date();
+  const currentHour = now.getHours();
+  const hoursBack = currentHour - targetHour;
+  const target = new Date(now);
+  target.setHours(targetHour, 0, 0, 0);
+  // If target hour is in the future (wrapped), go back a day
+  if (targetHour > currentHour) target.setDate(target.getDate() - 1);
+  const hourStart = target.getTime() / 1000;
+  const hourEnd = hourStart + 3600;
+
+  // Filter entries to this hour
+  const hourEntries = entries.filter(e => e[0] >= hourStart && e[0] < hourEnd).reverse(); // chronological
+
+  // Render using the same bar chart infrastructure
+  const barsEl = document.getElementById('chart-bars');
+  const xAxis  = document.getElementById('chart-x-axis');
+  const yAxis  = document.getElementById('chart-y-axis');
+  const empty  = document.getElementById('chart-empty');
+  const zeroLine = document.getElementById('chart-zero-line');
+
+  barsEl.className = 'chart-area';
+  xAxis.className = 'chart-x-axis';
+
+  if (!hourEntries.length) {
+    barsEl.style.display = 'none';
+    xAxis.style.display  = 'none';
+    empty.style.display  = 'flex';
+    empty.textContent    = 'No 5-min data for this hour';
+    return;
+  }
+
+  empty.style.display  = 'none';
+  barsEl.style.display = 'grid';
+  xAxis.style.display  = 'grid';
+
+  const prices = hourEntries.map(e => e[1]);
+  const rawMax = Math.max(...prices);
+  const rawMin = Math.min(...prices);
+  const maxP = Math.max(rawMax, 14);
+  const minNegReserve = -(maxP * 0.18);
+  const minP = Math.min(minNegReserve, rawMin * 1.1);
+  const range = maxP - minP || 1;
+
+  const zeroPctFromTop = (maxP / range) * 100;
+  zeroLine.style.top = zeroPctFromTop + '%';
+
+  yAxis.innerHTML = '';
+  let ticks = [maxP, Math.round(maxP / 2), 0];
+  if (rawMin < 0) ticks.push(Math.round(minP));
+  yAxis.style.display = 'block';
+  yAxis.style.position = 'absolute';
+  ticks.forEach(v => {
+    const lbl = document.createElement('span');
+    lbl.textContent = (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(0)) + '\u00a2';
+    lbl.style.position = 'absolute';
+    const pctFromTop = ((maxP - v) / range) * 100;
+    lbl.style.top = pctFromTop + '%';
+    lbl.style.transform = 'translateY(-50%)';
+    lbl.style.right = '2px';
+    yAxis.appendChild(lbl);
+  });
+
+  const dataBySlot = {};
+  hourEntries.forEach(([ts, price]) => {
+    const m = new Date(ts * 1000).getMinutes();
+    const slot = Math.floor(m / 5);
+    dataBySlot[slot] = price;
+  });
+
+  Array.from(barsEl.children).forEach(c => { if (c !== zeroLine) barsEl.removeChild(c); });
+  xAxis.innerHTML = '';
+  for (let slot = 0; slot < 12; slot++) {
+    const wrap = document.createElement('div');
+    wrap.className = 'bar-wrap';
+    if (dataBySlot[slot] !== undefined) {
+      const price = dataBySlot[slot];
+      const bar = document.createElement('div');
+      if (price >= 0) {
+        bar.className = 'bar pos';
+        const barPct = Math.max(0.5, (price / range) * 100);
+        bar.style.height = barPct + '%';
+        bar.style.bottom = ((-minP / range) * 100) + '%';
+      } else {
+        bar.className = 'bar neg';
+        const barPct = Math.max(0.5, (Math.abs(price) / range) * 100);
+        bar.style.height = barPct + '%';
+        bar.style.top = zeroPctFromTop + '%';
+      }
+      bar.style.background = barColor(price);
+      const val = document.createElement('span');
+      val.className = 'bar-val';
+      val.textContent = Math.abs(price) >= 100 ? Math.round(price).toString() : price.toFixed(1);
+      bar.appendChild(val);
+      wrap.appendChild(bar);
+    }
+    barsEl.appendChild(wrap);
+    const lbl = document.createElement('span');
+    lbl.textContent = ':' + String(slot * 5).padStart(2, '0');
+    lbl.style.opacity = dataBySlot[slot] !== undefined ? '1' : '0.3';
+    xAxis.appendChild(lbl);
   }
 }
 
@@ -1179,7 +1360,7 @@ function renderHourlyPriceChart(hours) {
 }
 
 // ═══ Power Tab ══════════════════════════════════════════════════════════
-let _powerDate = new Date().toISOString().slice(0,10);
+let _powerDate = localDateStr();
 
 function renderPowerTab() {
   if (!state || !state.power) return;
@@ -1318,10 +1499,10 @@ function drawPowerHistory() {
 }
 
 function changePowerDate(delta) {
-  const d = new Date(_powerDate);
+  const d = new Date(_powerDate + 'T12:00:00');
   d.setDate(d.getDate() + delta);
-  const today = new Date().toISOString().slice(0,10);
-  const newDate = d.toISOString().slice(0,10);
+  const today = localDateStr();
+  const newDate = localDateStr(d);
   if (newDate > today) return;
   _powerDate = newDate;
   document.getElementById('power-date').value = _powerDate;
@@ -1458,8 +1639,9 @@ function render() {
   }
 
   // ─── Price Bar Chart ────────────────────────────────────────────────
-  if (_priceChartMode === '5min') renderPriceBarChart(pr);
-  // (hourly mode is driven by fetch, not render loop)
+  // Only update live 5-min chart; skip if user is browsing a past hour
+  if (_priceChartMode === '5min' && _5minViewHour === null) renderPriceBarChart(pr);
+  // (hourly mode and historical 5-min are driven by fetch, not render loop)
 
   // ─── Battery pill ──────────────────────────────────────────────────
   const soc = p.soc_pct;
@@ -2164,12 +2346,12 @@ function renderEnergyCurrentHour(eh) {
     '<div style="text-align:center;margin-top:6px;color:var(--dim);font-size:0.72rem">Hour ' + h + ' (' + hStr + ')</div>';
 }
 
-let _energyDate = new Date().toISOString().slice(0,10);
+let _energyDate = localDateStr();
 
 function changeEnergyDate(delta) {
-  const d = new Date(_energyDate);
+  const d = new Date(_energyDate + 'T12:00:00');
   d.setDate(d.getDate() + delta);
-  _energyDate = d.toISOString().slice(0,10);
+  _energyDate = localDateStr(d);
   document.getElementById('energy-date').value = _energyDate;
   fetchEnergyDay(_energyDate);
 }

@@ -70,10 +70,22 @@ class AutoThresholds:
     kia_dc_limit:        int   = 80     # % DC limit (rarely changes)
 
     def save(self):
-        """Persist current thresholds to JSON file."""
+        """Persist current thresholds to JSON file.
+
+        Uses read-merge-write to preserve extra keys (e.g. telegram config)
+        that share the same file but aren't part of this dataclass.
+        """
         try:
+            existing = {}
+            if os.path.exists(THRESHOLDS_FILE):
+                try:
+                    with open(THRESHOLDS_FILE) as f:
+                        existing = json.load(f)
+                except Exception:
+                    pass
+            existing.update(asdict(self))
             with open(THRESHOLDS_FILE, "w") as f:
-                json.dump(asdict(self), f, indent=2)
+                json.dump(existing, f, indent=2)
         except Exception as e:
             log.warning("Failed to save thresholds: %s", e)
 
@@ -254,9 +266,23 @@ class AutoController:
                 return 1, t.mid_rate, f"CHARGE: {ep:.1f}c [{src}] (no SOC, mid default)"
             return 1, 0, f"HOLD: {ep:.1f}c [{src}] (no SOC)"
 
-        # If we recently hit a ceiling and SOC hasn't dropped enough, suppress charging
+        # If we recently hit a ceiling and SOC hasn't dropped enough, suppress charging.
+        # But NEVER suppress discharge — deadband prevents charge oscillation only.
         if self._ceiling_hit is not None:
             if soc >= (self._ceiling_hit - hyst):
+                # Discharge takes priority over deadband hold
+                if ep >= t.discharge_above and (soc is None or soc > t.low_floor):
+                    self._ceiling_hit = None
+                    return 2, 0, f"DISCHARGE: {ep:.1f}c [{src}] >= {t.discharge_above:.1f}c (was in deadband, SOC {soc:.0f}%)"
+                if (t.trend_alert_enabled and ps.trend_alert
+                        and (soc is None or soc > t.low_floor)):
+                    self._ceiling_hit = None
+                    latest_5min = ps.price_5min or 0
+                    return 2, 0, (
+                        f"TREND DISCHARGE: {t.trend_alert_count} consecutive 5-min "
+                        f">= {t.trend_alert_threshold:.0f}c (latest {latest_5min:.1f}c) "
+                        f"— was in deadband, SOC {soc:.0f}%"
+                    )
                 # Still in deadband — don't charge, just hold
                 return 1, 0, f"HOLD: SOC {soc:.0f}% in deadband (hit {self._ceiling_hit:.0f}%, wait for {self._ceiling_hit - hyst:.0f}%)"
             else:

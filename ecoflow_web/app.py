@@ -109,6 +109,15 @@ def static_files(filename):
     return send_from_directory(_static_dir, filename)
 
 
+# ─── Price API ─────────────────────────────────────────────────────────
+
+@app.route("/api/prices/5min")
+def api_prices_5min():
+    """Return full 24h of 5-minute price data from ComEd."""
+    data = price_state.history_5min_full or []
+    return json.dumps({"entries": data})
+
+
 # ─── Energy API ────────────────────────────────────────────────────────
 
 @app.route("/api/energy")
@@ -853,6 +862,7 @@ def _on_telemetry_update():
             power_state.grid_w or 0.0,
             power_state.load_w or 0.0,
             bw, total_cost,
+            energy_price=ep,
         )
 
     _broadcast()

@@ -123,6 +123,7 @@ class ComedPoller:
             self.ps.tier         = tier
             self.ps.tier_color   = col
             self.ps.history_5min = entries[:12]
+            self.ps.history_5min_full = entries
             self.ps.last_update  = time.time()
             self.ps.error        = ""
 

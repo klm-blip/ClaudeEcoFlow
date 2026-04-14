@@ -68,6 +68,7 @@ class PriceState:
     tier:             str             = "\u2014"
     tier_color:       str             = "#8b949e"
     history_5min:     list            = field(default_factory=list)
+    history_5min_full: list           = field(default_factory=list)  # full 24h for API (not broadcast)
     price_5min_ts:    Optional[float] = None   # unix timestamp of latest 5-min price
     trend_alert:      bool            = False  # True when consecutive 5-min prices signal expensive hour
     trend_alert_minute: Optional[int] = None   # minute within the hour when alert fired
