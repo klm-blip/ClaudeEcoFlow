@@ -23,7 +23,6 @@ log = logging.getLogger("ecoflow")
 
 BATTERY_CAPACITY_WH = 49_152  # 8 × 6,144 Wh
 IDLE_THRESHOLD_W = 50         # below this, battery is idle
-VAMPIRE_ESTIMATE_W = 60       # constant draw when idle
 
 
 class BatteryMonitor:
@@ -120,7 +119,9 @@ class BatteryMonitor:
 
         else:
             # ── Idle ──────────────────────────────────────────────
-            vamp = VAMPIRE_ESTIMATE_W * dt / 3600.0
+            # Use actual measured power (abs since small negative = drain)
+            idle_w = abs(battery_w) if battery_w is not None else 0
+            vamp = idle_w * dt / 3600.0
             self.vampire_wh += vamp
             self._day_vampire_wh += vamp
 
@@ -251,9 +252,10 @@ class BatteryMonitor:
 
     @property
     def aggregate_roundtrip_pct(self) -> float:
-        """Long-term roundtrip efficiency: discharge / charge.
-        Only meaningful when net SOC drift is small."""
-        if self.charge_ac_wh < 1000:  # need at least 1 kWh
+        """Gross roundtrip: discharge / charge (includes vampire overhead).
+        Low number doesn't mean bad efficiency — it means most charge
+        energy goes to vampire maintenance, not cycling."""
+        if self.charge_ac_wh < 1000:
             return 0.0
         return self.discharge_ac_wh / self.charge_ac_wh * 100
 
@@ -265,41 +267,35 @@ class BatteryMonitor:
         return ((self.soc_last - self.soc_start_global) / 100.0) * BATTERY_CAPACITY_WH
 
     @property
-    def soc_corrected_roundtrip_pct(self) -> float:
-        """SOC-corrected roundtrip eff. Adjusts for net SOC drift over the
-        monitoring window so the result is meaningful even when the battery
-        ends at a very different SOC than it started.
-
-        If SOC went up: some charged energy is still in the battery — credit it
-        as if it had been discharged.
-        If SOC went down: real charge needed was higher — add the deficit.
-        """
+    def cycle_efficiency_pct(self) -> float:
+        """Cycle roundtrip efficiency: discharge / (charge - vampire overhead).
+        Excludes vampire maintenance to isolate charge→discharge conversion.
+        SOC-corrected for net drift."""
         sd = self.stored_delta_wh
         eff_discharge = self.discharge_ac_wh + max(0.0, sd)
-        eff_charge    = self.charge_ac_wh    + max(0.0, -sd)
-        if eff_charge < 5000:  # need at least 5 kWh of effective charge for stability
-            return 0.0
-        eff = eff_discharge / eff_charge * 100
-        if eff < 30 or eff > 100:
-            return 0.0  # outside plausible range — treat as not enough data
-        return eff
-
-    @property
-    def delivered_efficiency_pct(self) -> float:
-        """SOC-corrected RT including vampire as overhead.
-        Answers: 'over the long run, what fraction of grid energy
-        I put into the battery actually ends up powering the home?'
-        Vampire is a sunk cost of having the battery at all, so this
-        is informational — NOT the cycle efficiency."""
-        sd = self.stored_delta_wh
-        eff_discharge = self.discharge_ac_wh + max(0.0, sd)
-        eff_charge = self.charge_ac_wh + max(0.0, -sd) + self.vampire_wh
+        # Subtract vampire: that charge energy went to standing loss, not cycling
+        eff_charge = self.charge_ac_wh + max(0.0, -sd) - self.vampire_wh
         if eff_charge < 5000:
             return 0.0
         eff = eff_discharge / eff_charge * 100
-        if eff < 0 or eff > 100:
+        if eff < 30 or eff > 100:
             return 0.0
         return eff
+
+    @property
+    def utilization_pct(self) -> float:
+        """What fraction of charge energy actually powered the home
+        (vs vampire maintenance and conversion losses)."""
+        if self.charge_ac_wh < 1000:
+            return 0.0
+        return self.discharge_ac_wh / self.charge_ac_wh * 100
+
+    @property
+    def vampire_overhead_pct(self) -> float:
+        """What fraction of charge energy goes to vampire maintenance."""
+        if self.charge_ac_wh < 1000:
+            return 0.0
+        return self.vampire_wh / self.charge_ac_wh * 100
 
     @property
     def monitoring_hours(self) -> float:
@@ -310,9 +306,9 @@ class BatteryMonitor:
             "charge_kwh": round(self.charge_ac_wh / 1000, 2),
             "discharge_kwh": round(self.discharge_ac_wh / 1000, 2),
             "vampire_kwh": round(self.vampire_wh / 1000, 2),
-            "aggregate_roundtrip_pct": round(self.aggregate_roundtrip_pct, 1),
-            "soc_corrected_roundtrip_pct": round(self.soc_corrected_roundtrip_pct, 1),
-            "delivered_efficiency_pct": round(self.delivered_efficiency_pct, 1),
+            "cycle_efficiency_pct": round(self.cycle_efficiency_pct, 1),
+            "utilization_pct": round(self.utilization_pct, 1),
+            "vampire_overhead_pct": round(self.vampire_overhead_pct, 1),
             "soc_start_global": self.soc_start_global,
             "soc_last": self.soc_last,
             "stored_delta_kwh": round(self.stored_delta_wh / 1000, 2),
